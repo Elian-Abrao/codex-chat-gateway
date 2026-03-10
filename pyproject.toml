@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-chat-gateway"
+version = "0.1.0"
+description = "Channel gateway for WhatsApp and other chat surfaces on top of codex-runtime-bridge."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Elian Abrao" }
+]
+dependencies = []
+
+[project.scripts]
+codex-chat-gateway = "codex_chat_gateway.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
