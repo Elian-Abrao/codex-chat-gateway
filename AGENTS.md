@@ -67,10 +67,18 @@ src/codex_chat_gateway/
   __init__.py
   __main__.py
   cli.py
+  models.py
+  session_store.py
   version.py
+  channel_adapters/
+  runtime_client/
+  services/
+  connectors/
+    whatsapp_baileys/
 docs/
   ARCHITECTURE.md
   ROADMAP.md
+  WORKER_PROTOCOL.md
 tests/
 ```
 
@@ -112,4 +120,5 @@ codex-chat-gateway version
 - `codex-runtime-bridge` is the runtime adapter
 - if you find yourself implementing runtime semantics here, stop and reassess
 - WhatsApp should be the first connector, not the only abstraction
-
+- channel-specific SDK details should stay behind adapter or worker boundaries
+- initial WhatsApp bridge mode should treat a configured group as the primary chat surface before broader DM/group automation

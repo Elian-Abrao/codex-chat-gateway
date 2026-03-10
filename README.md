@@ -61,6 +61,25 @@ WhatsApp / Telegram / Slack / future channels
 
 The gateway should consume the bridge, not bypass it.
 
+## Current Phase
+
+The first implementation step is deliberately smaller than runtime integration:
+
+- connect to WhatsApp
+- receive inbound messages
+- send outbound messages
+- prove reconnect and local auth persistence
+- keep the core channel-neutral for future adapters
+
+That means the current codebase now includes:
+
+- a unified inbound/outbound message model
+- a channel adapter interface
+- a subprocess-based worker protocol for channel drivers
+- a first built-in `whatsapp-baileys` adapter
+- a simple echo gateway for transport validation before bridge integration
+- a first bridge-backed mode where one WhatsApp group behaves like the agent chat
+
 ## Planned Consumer Contract
 
 The initial gateway design assumes the bridge provides:
@@ -84,10 +103,13 @@ This repository is intentionally bootstrapped but not feature-complete yet.
 
 Current contents:
 
-- installable Python package skeleton
-- minimal CLI
+- installable Python package
+- multi-channel gateway core models
+- channel adapter abstraction
+- subprocess worker protocol
+- WhatsApp/Baileys worker scaffold
+- echo-mode CLI for transport validation
 - architecture and boundary documentation
-- roadmap for channel implementation
 
 ## Layout
 
@@ -96,10 +118,22 @@ src/codex_chat_gateway/
   __init__.py
   __main__.py
   cli.py
+  models.py
   version.py
+  channel_adapters/
+    base.py
+    factory.py
+    process.py
+  services/
+    echo.py
+  connectors/
+    whatsapp_baileys/
+      package.json
+      worker.mjs
 docs/
   ARCHITECTURE.md
   ROADMAP.md
+  WORKER_PROTOCOL.md
 tests/
 ```
 
@@ -113,19 +147,108 @@ python -m unittest discover -s tests -p 'test_*.py'
 codex-chat-gateway version
 ```
 
+## WhatsApp Echo Spike
+
+The first operational goal is transport-only validation, without the runtime bridge yet.
+
+Install the Node dependencies for the built-in WhatsApp worker:
+
+```bash
+cd src/codex_chat_gateway/connectors/whatsapp_baileys
+npm install
+```
+
+Then run the echo gateway:
+
+```bash
+codex-chat-gateway echo \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --allow-from 5511999999999@s.whatsapp.net
+```
+
+What this does:
+
+- starts the Python gateway core
+- spawns the Baileys worker as a subprocess
+- prints a QR code for WhatsApp pairing on first login
+- receives inbound text messages
+- replies with `echo: <message>`
+
+This stage exists to validate WhatsApp transport behavior before adding `codex-runtime-bridge` calls.
+
+## WhatsApp Group To Bridge
+
+After the transport works, the next supported mode is:
+
+- receive any message inside a target WhatsApp group
+- forward those messages to `codex-runtime-bridge`
+- keep one runtime thread per WhatsApp group
+- send the runtime response back to the same WhatsApp group by default
+
+Start your local bridge first, for example:
+
+```bash
+codex-runtime-bridge serve
+```
+
+Then run the chat gateway in bridge-backed mode:
+
+```bash
+codex-chat-gateway bridge-chat \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --bridge-url http://127.0.0.1:8787 \
+  --group-subject Codex
+```
+
+What this mode does right now:
+
+- watches all messages from the WhatsApp group named `Codex`
+- forwards the text to `codex-runtime-bridge`
+- creates and reuses one `threadId` per WhatsApp group
+- replies back to the same WhatsApp group with the final answer formatted as `[Codex]`
+
+Optional visibility flags:
+
+- `--show-reasoning` sends reasoning summaries back to WhatsApp in smaller progress messages
+- `--show-actions` sends tool and command activity back to WhatsApp in quoted action blocks
+
+Example with both enabled:
+
+```bash
+codex-chat-gateway bridge-chat \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --bridge-url http://127.0.0.1:8787 \
+  --group-subject Codex \
+  --show-reasoning \
+  --show-actions
+```
+
+If you want to observe the bridge response without replying back to WhatsApp:
+
+```bash
+codex-chat-gateway bridge-chat \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --bridge-url http://127.0.0.1:8787 \
+  --group-subject Codex \
+  --log-only
+```
+
 ## Design Rules
 
 - Keep the gateway separate from the runtime bridge.
 - Treat `codex-runtime-bridge` as the source of truth for runtime behavior.
 - Normalize channel events, but do not recreate Codex semantics locally.
 - Prefer thin adapters per channel and a shared internal session model.
+- Keep channel SDK specifics inside connector workers when that reduces coupling.
 - Keep deployment guidance private-first and authenticated.
 
 ## Next Steps
 
-1. Define the runtime bridge client contract this repository will consume.
-2. Add a session store abstraction for contact to `threadId` mapping.
-3. Add a channel abstraction for WhatsApp-first delivery.
-4. Add inbound and outbound message normalization.
-5. Design approval flows that work in external chat UIs.
-
+1. Persist the session store beyond process memory.
+2. Add approval and pending-action state.
+3. Add attachment handling for the WhatsApp worker.
+4. Add a second channel adapter to validate the multi-channel shape.

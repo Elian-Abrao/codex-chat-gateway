@@ -22,3 +22,5 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"codex_chat_gateway.connectors.whatsapp_baileys" = ["README.md", "package.json", "worker.mjs"]

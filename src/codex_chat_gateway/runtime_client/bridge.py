@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+from typing import AsyncIterator
+from urllib import request
+
+
+class BridgeClient:
+    def __init__(self, base_url: str, timeout: float = 120.0) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    async def chat(
+        self,
+        prompt: str,
+        *,
+        thread_id: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"prompt": prompt, **kwargs}
+        if thread_id is not None:
+            payload["threadId"] = thread_id
+        return await asyncio.to_thread(self._post_json, "/v1/chat", payload)
+
+    async def stream_chat(
+        self,
+        prompt: str,
+        *,
+        thread_id: str | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        payload: dict[str, Any] = {"prompt": prompt, **kwargs}
+        if thread_id is not None:
+            payload["threadId"] = thread_id
+
+        queue: asyncio.Queue[object] = asyncio.Queue()
+        done = object()
+        loop = asyncio.get_running_loop()
+
+        def worker() -> None:
+            body = json.dumps(payload).encode("utf-8")
+            req = request.Request(
+                f"{self._base_url}/v1/chat/stream",
+                data=body,
+                headers={
+                    "Accept": "text/event-stream",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with request.urlopen(req, timeout=self._timeout) as response:
+                    for raw_line in response:
+                        line = raw_line.decode("utf-8").strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        loop.call_soon_threadsafe(queue.put_nowait, json.loads(line[6:]))
+            except Exception as exc:  # pragma: no cover - exercised through async surface
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, done)
+
+        task = asyncio.create_task(asyncio.to_thread(worker))
+        try:
+            while True:
+                item = await queue.get()
+                if item is done:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            await task
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            f"{self._base_url}{path}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(req, timeout=self._timeout) as response:
+            return json.loads(response.read().decode("utf-8"))

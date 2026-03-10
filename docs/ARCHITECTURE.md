@@ -24,10 +24,12 @@ It should translate:
 - streamed bridge responses into outbound channel messages
 - bridge approvals into channel-native follow-up interactions
 
+In the first WhatsApp phase, it also needs to validate raw transport behavior before the bridge is involved.
+
 ## Layers
 
 ```text
-channel connector
+channel worker
   |
   +-- WhatsApp
   +-- Telegram
@@ -36,6 +38,7 @@ channel connector
   v
 gateway core
   |
+  +-- worker protocol
   +-- runtime bridge client
   +-- session mapping
   +-- channel-neutral message model
@@ -58,13 +61,19 @@ Codex runtime
   - owns communication with `codex-runtime-bridge`
   - handles normal chat, streaming, slash commands, and approvals
 
+- `worker protocol`
+  - lets channel-specific SDKs live behind a process boundary when needed
+  - keeps the gateway core channel-neutral even if a channel requires another language or runtime
+
 - `session store`
   - maps a channel identity or conversation to a `threadId`
   - tracks policy-scoped metadata such as workspace, allowed commands, and display preferences
+  - the first live use case is one runtime thread per WhatsApp group
 
 - `channel adapter`
-  - understands transport-specific delivery and inbound event shapes
-  - converts them into the internal gateway model
+  - owns adapter lifecycle inside the Python core
+  - receives normalized inbound messages from a worker or in-process driver
+  - sends normalized outbound messages back to the channel implementation
 
 - `approval coordinator`
   - turns bridge server requests into chat-friendly confirmations
@@ -77,12 +86,45 @@ Codex runtime
 ## Message Flow
 
 1. A user sends a message from a chat platform.
-2. The channel adapter authenticates and normalizes the inbound event.
-3. The gateway resolves the session and associated `threadId`.
-4. The runtime client calls `codex-runtime-bridge`.
-5. Streamed events are converted into outbound channel updates.
-6. If the runtime asks for approval or input, the approval coordinator stores state and asks the user through the channel.
-7. The user's reply is mapped back into a bridge response.
+2. A channel worker receives the raw event from the external SDK.
+3. The worker normalizes the event and emits it to the gateway core.
+4. In echo mode, the gateway replies directly through the worker.
+5. In bridge mode, the gateway resolves the session and calls `codex-runtime-bridge`.
+6. Streamed events are converted into outbound channel updates.
+7. If the runtime asks for approval or input, the approval coordinator stores state and asks the user through the channel.
+8. The user's reply is mapped back into a bridge response.
+
+## Current WhatsApp Direction
+
+The first built-in adapter uses:
+
+- Python gateway core
+- Node worker for WhatsApp
+- `Baileys` as the WhatsApp SDK
+- NDJSON over stdio between Python and the worker
+
+This is an intentional architectural choice:
+
+- WhatsApp gets an actual transport implementation early
+- the core stays reusable for future channels
+- channel-specific SDK choices do not dictate the gateway language
+
+## First Bridge-Backed Use Case
+
+The first real runtime integration target is intentionally narrow:
+
+- one WhatsApp group
+- messages inside that group
+- text-only forwarding
+- runtime response logged locally
+- automatic reply back to the same group by default
+
+This keeps the product direction aligned with a personal remote-control workflow while avoiding early complexity around:
+
+- replying to other people
+- DM policy
+- group mention rules
+- approval UX in chat
 
 ## Initial Contract Assumptions
 
@@ -95,4 +137,3 @@ The first implementation should assume the bridge supports:
 - thread creation
 
 Anything beyond that should be added explicitly to the bridge instead of guessed here.
-
