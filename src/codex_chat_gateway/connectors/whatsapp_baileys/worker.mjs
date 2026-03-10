@@ -10,6 +10,12 @@ import makeWASocket, {
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 
+for (const method of ["log", "info", "warn", "error", "debug"]) {
+  console[method] = (...args) => {
+    process.stderr.write(args.map((value) => String(value)).join(" ") + "\n");
+  };
+}
+
 const logger = pino(
   { level: process.env.LOG_LEVEL || "info" },
   pino.destination(2),

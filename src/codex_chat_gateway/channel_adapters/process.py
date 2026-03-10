@@ -116,7 +116,7 @@ class JsonlSubprocessChannelAdapter(ChannelAdapter):
             if self._handler is None:
                 raise RuntimeError(f"{self.channel_name} adapter has no handler registered")
             message = InboundMessage.from_dict(payload["message"])
-            logger.info(
+            logger.debug(
                 "%s inbound message chat=%s sender=%s text=%r attachments=%d",
                 self.channel_name,
                 message.chat_id,
@@ -143,7 +143,7 @@ class JsonlSubprocessChannelAdapter(ChannelAdapter):
     async def send_message(self, message: OutboundMessage) -> None:
         if self._process is None or self._process.stdin is None:
             raise RuntimeError(f"{self.channel_name} adapter not started")
-        logger.info(
+        logger.debug(
             "%s outbound message chat=%s text=%r attachments=%d",
             self.channel_name,
             message.chat_id,

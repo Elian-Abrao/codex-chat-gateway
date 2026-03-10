@@ -237,6 +237,37 @@ codex-chat-gateway bridge-chat \
   --log-only
 ```
 
+## Interactive Console
+
+For debugging and validation, the repository also exposes an interactive terminal console.
+
+It can:
+
+- print target-group WhatsApp messages in the terminal
+- send terminal text to WhatsApp
+- inject prompts into `codex-runtime-bridge` from the terminal
+- print Codex status, commentary, action steps, and final answers in the terminal
+
+Example:
+
+```bash
+codex-chat-gateway console \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --bridge-url http://127.0.0.1:8787 \
+  --group-chat-id 120363424947858903@g.us \
+  --log-only
+```
+
+Console commands:
+
+- plain text: send to WhatsApp and, if the bridge is configured, also ask Codex
+- `/wa <text>`: send to WhatsApp only
+- `/codex <text>`: ask Codex only
+- `/quit`: exit
+
+By default, the terminal shows Codex progress, but WhatsApp only receives the final `[Codex]` reply.
+
 ## Design Rules
 
 - Keep the gateway separate from the runtime bridge.

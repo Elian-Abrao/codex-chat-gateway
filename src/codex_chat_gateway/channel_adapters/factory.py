@@ -26,6 +26,7 @@ def create_builtin_adapter(
 
     worker_path = files("codex_chat_gateway.connectors.whatsapp_baileys").joinpath("worker.mjs")
     env = dict(os.environ)
+    env.setdefault("LOG_LEVEL", "warn")
     if allow_from:
         env["WHATSAPP_ALLOWLIST"] = ",".join(allow_from)
     if auth_dir is not None:

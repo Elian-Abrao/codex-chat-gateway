@@ -18,6 +18,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("whatsapp-baileys", available_builtin_adapters())
         adapter = create_builtin_adapter("whatsapp-baileys")
         self.assertEqual(adapter.channel_name, "whatsapp")
+        self.assertEqual(adapter._env["LOG_LEVEL"], "warn")
 
     def test_parser_accepts_bridge_chat_command(self) -> None:
         args = build_parser().parse_args(
@@ -43,3 +44,19 @@ class CliTests(unittest.TestCase):
 
         self.assertTrue(args.show_reasoning)
         self.assertTrue(args.show_actions)
+
+    def test_parser_accepts_console_command(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "console",
+                "--group-chat-id",
+                "123@g.us",
+                "--bridge-url",
+                "http://127.0.0.1:8787",
+            ]
+        )
+
+        self.assertEqual(args.command, "console")
+        self.assertEqual(args.group_chat_id, ["123@g.us"])
+        self.assertEqual(args.bridge_url, "http://127.0.0.1:8787")
+        self.assertFalse(args.log_only)
