@@ -13,12 +13,14 @@ from ..runtime_client import BridgeClient
 from ..session_store import InMemorySessionStore
 from ..session_store import PendingBridgeRequest
 from .bridge_runtime import BridgeTurnRunner
+from .pending_requests import build_pending_approval_result
 from .group_target import matches_target_group
 from .group_target import session_key_for_message
 from .pending_requests import build_input_answers
 from .pending_requests import format_busy_message
 from .pending_requests import format_pending_request_message
 from .pending_requests import format_pending_resolution_message
+from .pending_requests import pending_accepts_approval_commands
 from .pending_requests import parse_pending_command
 
 logger = logging.getLogger(__name__)
@@ -125,14 +127,13 @@ class BridgeChatGateway:
             return True
 
         if action in {"approve", "reject"}:
-            if pending_request.kind != "approval_request":
+            if not pending_accepts_approval_commands(pending_request):
                 await self._send_action_reply(message, "a solicitação pendente não aceita /approve ou /reject")
                 return True
-            decision = "approve" if action == "approve" else "decline"
             try:
                 await self.bridge_client.respond_server_request(
                     pending_request.request_id,
-                    result={"decision": decision},
+                    result=build_pending_approval_result(pending_request, action),
                 )
             except Exception as exc:
                 await self._send_action_reply(message, f"falha ao responder ao bridge: {exc}")

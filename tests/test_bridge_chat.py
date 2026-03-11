@@ -373,6 +373,55 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
             ["[Codex • ações]\n> resposta enviada"],
         )
 
+    async def test_gateway_can_resolve_mcp_input_approvals_with_approve(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_3",
+                kind="input_request",
+                text="User input is required to continue.",
+                details={"questions": [{"id": "mcp_tool_call_approval_call_abc123"}]},
+            ),
+        )
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_approve_mcp",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="/approve",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+
+        self.assertEqual(
+            bridge.respond_calls,
+            [
+                {
+                    "request_id": "req_3",
+                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "approve"}},
+                    "error": None,
+                }
+            ],
+        )
+        self.assertIsNone(store.get("whatsapp:123@g.us").pending_request)
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            ["[Codex • ações]\n> aprovação enviada"],
+        )
+
     async def test_gateway_blocks_new_prompts_while_pending_request_exists(self) -> None:
         adapter = FakeAdapter()
         bridge = FakeBridgeClient()

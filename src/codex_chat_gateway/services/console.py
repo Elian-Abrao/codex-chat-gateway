@@ -13,12 +13,14 @@ from ..models import OutboundMessage
 from ..runtime_client import BridgeClient
 from ..session_store import InMemorySessionStore
 from .pending_requests import build_input_answers
+from .pending_requests import build_pending_approval_result
 from .bridge_runtime import BridgeTurnRunner
 from .group_target import matches_target_group
 from .group_target import session_key_for_message
 from .pending_requests import format_busy_message
 from .pending_requests import format_pending_request_message
 from .pending_requests import format_pending_resolution_message
+from .pending_requests import pending_accepts_approval_commands
 from .pending_requests import parse_pending_command
 
 
@@ -198,18 +200,17 @@ class ConsoleGateway:
             )
             return True
         if action in {"approve", "reject"}:
-            if pending_request.kind != "approval_request":
+            if not pending_accepts_approval_commands(pending_request):
                 await self._send_action_update(
                     message,
                     "a solicitação pendente não aceita /approve ou /reject",
                     forward_to_whatsapp=forward_to_whatsapp,
                 )
                 return True
-            decision = "approve" if action == "approve" else "decline"
             try:
                 await self.bridge_client.respond_server_request(  # type: ignore[union-attr]
                     pending_request.request_id,
-                    result={"decision": decision},
+                    result=build_pending_approval_result(pending_request, action),
                 )
             except Exception as exc:
                 await self._send_action_update(

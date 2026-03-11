@@ -256,6 +256,47 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("[codex][action]\n[Codex • ações]\n> resposta enviada", terminal)
 
+    async def test_console_can_resolve_mcp_input_approvals_with_approve(self) -> None:
+        adapter = FakeAdapter()
+        terminal: list[str] = []
+        bridge = FakeBridgeClient("http://127.0.0.1:8787")
+        gateway = ConsoleGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            allowed_group_subjects=set(),
+            allowed_group_chat_ids={"123@g.us"},
+            output=terminal.append,
+        )
+        gateway.session_store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_3",
+                kind="input_request",
+                text="User input is required to continue.",
+                details={"questions": [{"id": "mcp_tool_call_approval_call_abc123"}]},
+            ),
+        )
+
+        keep_going = await gateway.handle_console_line("/approve")
+
+        self.assertTrue(keep_going)
+        self.assertEqual(
+            bridge.respond_calls,
+            [
+                {
+                    "request_id": "req_3",
+                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "approve"}},
+                    "error": None,
+                }
+            ],
+        )
+        self.assertIsNone(gateway.session_store.get("whatsapp:123@g.us").pending_request)
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            ["[Codex • ações]\n> aprovação enviada"],
+        )
+        self.assertIn("[codex][action]\n[Codex • ações]\n> aprovação enviada", terminal)
+
     async def test_console_blocks_new_prompts_while_pending_request_exists(self) -> None:
         adapter = FakeAdapter()
         terminal: list[str] = []

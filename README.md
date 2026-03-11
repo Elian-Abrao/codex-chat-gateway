@@ -227,6 +227,8 @@ Bridge-backed WhatsApp commands:
 - `/answer <text>`: answer the current pending input request
 - `/answer {"field":"value"}`: answer a structured pending input request as JSON
 
+MCP tool approvals may also arrive as an input request. In that case the gateway normalizes the UX and still lets you use `/approve` or `/reject`.
+
 Example with all progress updates enabled:
 
 ```bash
