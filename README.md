@@ -209,12 +209,23 @@ What this mode does right now:
 - consumes the stable consumer stream from the bridge
 - creates and reuses one `threadId` per WhatsApp group
 - replies back to the same WhatsApp group with the final answer formatted as `[Codex]`
+- keeps pending approvals and input requests per WhatsApp group session
 
 Optional visibility flags:
 
 - `--show-commentary` sends Codex andamento messages back to WhatsApp in smaller progress messages
 - `--show-reasoning` sends reasoning summaries back to WhatsApp in smaller progress messages
 - `--show-actions` sends tool and command activity back to WhatsApp in quoted action blocks
+
+Pending bridge requests always surface in the WhatsApp group, even when `--show-actions` is off, so the user can continue the turn.
+
+Bridge-backed WhatsApp commands:
+
+- `/pending`: show the current pending bridge request for the group
+- `/approve`: approve the current pending approval request
+- `/reject`: reject the current pending approval request
+- `/answer <text>`: answer the current pending input request
+- `/answer {"field":"value"}`: answer a structured pending input request as JSON
 
 Example with all progress updates enabled:
 
@@ -250,6 +261,7 @@ It can:
 - send terminal text to WhatsApp
 - inject prompts into `codex-runtime-bridge` from the terminal
 - print Codex status, commentary, action steps, and final answers in the terminal
+- resolve pending approval and input requests from the terminal with the same commands used in WhatsApp
 
 Example:
 
@@ -267,6 +279,11 @@ Console commands:
 - plain text: send to WhatsApp and, if the bridge is configured, also ask Codex
 - `/wa <text>`: send to WhatsApp only
 - `/codex <text>`: ask Codex only
+- `/pending`: show the current pending bridge request
+- `/approve`: approve the current pending approval request
+- `/reject`: reject the current pending approval request
+- `/answer <text>`: answer the current pending input request
+- `/answer {"field":"value"}`: answer a structured pending input request as JSON
 - `/quit`: exit
 
 By default, the terminal shows Codex progress, but WhatsApp only receives the final `[Codex]` reply.

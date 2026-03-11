@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
+from typing import Any
 from typing import AsyncIterator
 from typing import Literal
 
 from ..runtime_client import BridgeClient
 from ..session_store import InMemorySessionStore
+from ..session_store import PendingBridgeRequest
 
 BridgeUpdateMode = Literal["commentary", "reasoning", "action", "final"]
 FINAL_REPLY_HEADER = "[Codex]"
@@ -17,7 +20,9 @@ ACTION_REPLY_HEADER = "[Codex • ações]"
 @dataclass(slots=True)
 class BridgeUpdate:
     mode: BridgeUpdateMode
-    text: str
+    text: str | None = None
+    pending_request: PendingBridgeRequest | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -129,8 +134,28 @@ class BridgeTurnRunner:
                 continue
 
             if event_type in {"action", "approval_request", "input_request"}:
-                if self.show_actions:
-                    yield BridgeUpdate("action", self._format_action_reply(self._format_action_text(event, normalized)))
+                pending_request: PendingBridgeRequest | None = None
+                should_emit = self.show_actions
+                if event_type in {"approval_request", "input_request"}:
+                    request_id = event.get("requestId")
+                    if request_id is not None:
+                        pending_request = PendingBridgeRequest(
+                            request_id=request_id,
+                            kind=event_type,
+                            text=normalized,
+                            thread_id=thread_id,
+                            turn_id=event.get("turnId") if isinstance(event.get("turnId"), str) else None,
+                            approval_type=event.get("approvalType") if isinstance(event.get("approvalType"), str) else None,
+                            details=event.get("details") if isinstance(event.get("details"), dict) else {},
+                        )
+                    should_emit = True
+                if should_emit:
+                    yield BridgeUpdate(
+                        "action",
+                        self._format_action_reply(self._format_action_text(event, normalized)),
+                        pending_request=pending_request,
+                        details=event.get("details") if isinstance(event.get("details"), dict) else {},
+                    )
                 continue
 
             if event_type == "final":

@@ -78,6 +78,7 @@ Codex runtime
 - `approval coordinator`
   - turns bridge server requests into chat-friendly confirmations
   - correlates user responses back to the right runtime request id
+  - the current WhatsApp flow exposes `/pending`, `/approve`, `/reject`, and `/answer ...`
 
 - `media adapter`
   - handles channel file, image, and audio payloads
@@ -93,6 +94,21 @@ Codex runtime
 6. Streamed events are converted into outbound channel updates.
 7. If the runtime asks for approval or input, the approval coordinator stores state and asks the user through the channel.
 8. The user's reply is mapped back into a bridge response.
+
+## Current Approval Flow
+
+For the first WhatsApp bridge mode:
+
+- pending requests are tracked per group session
+- normal prompts are blocked while a pending request exists
+- approval requests are answered with:
+  - `/approve`
+  - `/reject`
+- input requests are answered with:
+  - `/answer <text>`
+  - `/answer {"field":"value"}`
+
+This keeps the approval loop in the chat channel without reimplementing runtime semantics locally.
 
 ## Current WhatsApp Direction
 

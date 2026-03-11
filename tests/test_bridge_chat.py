@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from codex_chat_gateway.channel_adapters.base import ChannelAdapter
@@ -8,6 +9,7 @@ from codex_chat_gateway.models import OutboundMessage
 from codex_chat_gateway.runtime_client import BridgeClient
 from codex_chat_gateway.services import BridgeChatGateway
 from codex_chat_gateway.session_store import InMemorySessionStore
+from codex_chat_gateway.session_store import PendingBridgeRequest
 
 
 class FakeAdapter(ChannelAdapter):
@@ -35,6 +37,7 @@ class FakeBridgeClient(BridgeClient):
     def __init__(self) -> None:
         self.calls: list[dict[str, str | None]] = []
         self.stream_calls: list[dict[str, str | None]] = []
+        self.respond_calls: list[dict[str, object]] = []
 
     async def chat(self, prompt: str, *, thread_id: str | None = None, **kwargs) -> dict[str, str]:
         self.calls.append({"prompt": prompt, "thread_id": thread_id})
@@ -51,6 +54,31 @@ class FakeBridgeClient(BridgeClient):
                 "summary": kwargs.get("summary"),
             }
         )
+        if prompt == "needs approval":
+            yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
+            yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
+            yield {
+                "event": "approval_request",
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "requestId": "req_1",
+                "approvalType": "command_execution",
+                "text": "Approval required for command execution.",
+                "details": {"command": "rm -rf /tmp/demo"},
+            }
+            return
+        if prompt == "needs input":
+            yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
+            yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
+            yield {
+                "event": "input_request",
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "requestId": "req_2",
+                "text": "User input is required to continue.",
+                "details": {"questions": [{"id": "city", "label": "City"}]},
+            }
+            return
         yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
         yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
         yield {
@@ -79,8 +107,22 @@ class FakeBridgeClient(BridgeClient):
             "text": "ok",
         }
 
+    async def respond_server_request(self, request_id: str | int, *, result: object = None, error: dict | None = None):
+        self.respond_calls.append(
+            {
+                "request_id": request_id,
+                "result": result,
+                "error": error,
+            }
+        )
+        return {"ok": True, "requestId": request_id}
+
 
 class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
+    async def _drain_gateway(self, gateway: BridgeChatGateway) -> None:
+        if gateway._turn_tasks:
+            await asyncio.gather(*tuple(gateway._turn_tasks))
+
     async def test_gateway_ignores_messages_outside_target_group(self) -> None:
         adapter = FakeAdapter()
         bridge = FakeBridgeClient()
@@ -104,6 +146,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 metadata={"fromMe": False, "groupSubject": "Other"},
             )
         )
+        await self._drain_gateway(gateway)
 
         self.assertEqual(bridge.stream_calls, [])
 
@@ -130,6 +173,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 metadata={"fromMe": False, "groupSubject": "Codex"},
             )
         )
+        await self._drain_gateway(gateway)
 
         self.assertEqual(
             bridge.stream_calls,
@@ -163,6 +207,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 metadata={"fromMe": False, "groupSubject": "Codex"},
             )
         )
+        await self._drain_gateway(gateway)
 
         self.assertEqual(
             bridge.stream_calls,
@@ -202,5 +247,170 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 metadata={"fromMe": False, "groupSubject": "Codex"},
             )
         )
+        await self._drain_gateway(gateway)
 
         self.assertEqual(adapter.sent_messages, [])
+
+    async def test_gateway_surfaces_pending_approval_requests(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_approval",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="needs approval",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+        await self._drain_gateway(gateway)
+
+        session = store.get("whatsapp:123@g.us")
+        self.assertIsNotNone(session.pending_request)
+        self.assertEqual(session.pending_request.request_id, "req_1")
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            [
+                "[Codex • ações]\n> aprovação necessária para comando: rm -rf /tmp/demo\n> use /approve ou /reject",
+            ],
+        )
+
+    async def test_gateway_can_resolve_pending_approval_requests(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_1",
+                kind="approval_request",
+                text="Approval required for command execution.",
+                approval_type="command_execution",
+                details={"command": "rm -rf /tmp/demo"},
+            ),
+        )
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_approve",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="/approve",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+
+        self.assertEqual(
+            bridge.respond_calls,
+            [{"request_id": "req_1", "result": {"decision": "approve"}, "error": None}],
+        )
+        self.assertIsNone(store.get("whatsapp:123@g.us").pending_request)
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            ["[Codex • ações]\n> aprovação enviada"],
+        )
+
+    async def test_gateway_can_resolve_pending_input_requests(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_2",
+                kind="input_request",
+                text="User input is required to continue.",
+                details={"questions": [{"id": "city", "label": "City"}]},
+            ),
+        )
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_answer",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="/answer Sao Paulo",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+
+        self.assertEqual(
+            bridge.respond_calls,
+            [{"request_id": "req_2", "result": {"answers": {"city": "Sao Paulo"}}, "error": None}],
+        )
+        self.assertIsNone(store.get("whatsapp:123@g.us").pending_request)
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            ["[Codex • ações]\n> resposta enviada"],
+        )
+
+    async def test_gateway_blocks_new_prompts_while_pending_request_exists(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_1",
+                kind="approval_request",
+                text="Approval required for command execution.",
+                approval_type="command_execution",
+                details={"command": "rm -rf /tmp/demo"},
+            ),
+        )
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_other",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="outra pergunta",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+
+        self.assertEqual(bridge.stream_calls, [])
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            [
+                "[Codex • ações]\n> aprovação necessária para comando: rm -rf /tmp/demo\n> use /approve ou /reject",
+            ],
+        )

@@ -129,6 +129,20 @@ class BridgeClient:
         finally:
             await task
 
+    async def respond_server_request(
+        self,
+        request_id: str | int,
+        *,
+        result: Any = None,
+        error: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "requestId": request_id,
+            "result": result,
+            "error": error,
+        }
+        return await asyncio.to_thread(self._post_json, "/v1/server-requests/respond", payload)
+
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
         req = request.Request(
