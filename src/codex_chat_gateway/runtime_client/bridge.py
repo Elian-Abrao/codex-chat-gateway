@@ -65,30 +65,33 @@ class BridgeClient:
         inject_event_name: bool,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
-        payload: dict[str, Any] = {"prompt": prompt, **kwargs}
+        request_payload: dict[str, Any] = {"prompt": prompt, **kwargs}
         if thread_id is not None:
-            payload["threadId"] = thread_id
+            request_payload["threadId"] = thread_id
 
         queue: asyncio.Queue[object] = asyncio.Queue()
         done = object()
         loop = asyncio.get_running_loop()
 
         def worker() -> None:
-            body = json.dumps(payload).encode("utf-8")
-            req = request.Request(
-                f"{self._base_url}{path}",
-                data=body,
-                headers={
-                    "Accept": "text/event-stream",
-                    "Content-Type": "application/json",
-                },
-                method="POST",
-            )
             try:
+                body = json.dumps(request_payload).encode("utf-8")
+                req = request.Request(
+                    f"{self._base_url}{path}",
+                    data=body,
+                    headers={
+                        "Accept": "text/event-stream",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
                 with request.urlopen(req, timeout=self._timeout) as response:
                     current_event: str | None = None
                     data_lines: list[str] = []
-                    for raw_line in response:
+                    while True:
+                        raw_line = response.readline()
+                        if not raw_line:
+                            break
                         line = raw_line.decode("utf-8").rstrip("\r\n")
                         if line.startswith("event: "):
                             current_event = line[7:]
@@ -101,17 +104,17 @@ class BridgeClient:
                         if not data_lines:
                             current_event = None
                             continue
-                        payload = json.loads("\n".join(data_lines))
-                        if inject_event_name and current_event and "event" not in payload:
-                            payload["event"] = current_event
-                        loop.call_soon_threadsafe(queue.put_nowait, payload)
+                        event_payload = json.loads("\n".join(data_lines))
+                        if inject_event_name and current_event and "event" not in event_payload:
+                            event_payload["event"] = current_event
+                        loop.call_soon_threadsafe(queue.put_nowait, event_payload)
                         current_event = None
                         data_lines = []
                     if data_lines:
-                        payload = json.loads("\n".join(data_lines))
-                        if inject_event_name and current_event and "event" not in payload:
-                            payload["event"] = current_event
-                        loop.call_soon_threadsafe(queue.put_nowait, payload)
+                        event_payload = json.loads("\n".join(data_lines))
+                        if inject_event_name and current_event and "event" not in event_payload:
+                            event_payload["event"] = current_event
+                        loop.call_soon_threadsafe(queue.put_nowait, event_payload)
             except Exception as exc:  # pragma: no cover - exercised through async surface
                 loop.call_soon_threadsafe(queue.put_nowait, exc)
             finally:
