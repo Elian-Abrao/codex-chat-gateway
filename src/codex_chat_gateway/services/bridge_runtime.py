@@ -7,9 +7,11 @@ from typing import Any
 from typing import AsyncIterator
 from typing import Literal
 
+from ..models import Attachment
 from ..runtime_client import BridgeClient
 from ..session_store import InMemorySessionStore
 from ..session_store import PendingBridgeRequest
+from .attachment_directives import extract_attachment_directives
 
 BridgeUpdateMode = Literal["commentary", "reasoning", "action", "final"]
 FINAL_REPLY_HEADER = "[Codex]"
@@ -22,6 +24,7 @@ ACTION_REPLY_HEADER = "[Codex • ações]"
 class BridgeUpdate:
     mode: BridgeUpdateMode
     text: str | None = None
+    attachments: list[Attachment] = field(default_factory=list)
     pending_request: PendingBridgeRequest | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -96,6 +99,51 @@ class BridgeTurnRunner:
         quoted = "\n".join(f"> {line}" for line in text.strip().splitlines())
         return f"{ACTION_REPLY_HEADER}\n{quoted}"
 
+    def _extract_attachments(self, event: dict[str, Any]) -> list[Attachment]:
+        raw_attachments = event.get("attachments")
+        if not isinstance(raw_attachments, list):
+            return []
+        attachments: list[Attachment] = []
+        for item in raw_attachments:
+            if not isinstance(item, dict):
+                continue
+            try:
+                attachments.append(Attachment.from_dict(item))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return attachments
+
+    def _extract_attachment_error_note(self, event: dict[str, Any]) -> str | None:
+        details = event.get("details")
+        if not isinstance(details, dict):
+            return None
+        errors = details.get("attachmentErrors")
+        if not isinstance(errors, list):
+            return None
+        normalized = [str(item).strip() for item in errors if str(item).strip()]
+        if not normalized:
+            return None
+        lines = ["Obs.: não consegui anexar alguns arquivos:"]
+        lines.extend(f"- {item}" for item in normalized)
+        return "\n".join(lines)
+
+    def _build_final_update(
+        self,
+        *,
+        text: str | None,
+        attachments: list[Attachment],
+        error_note: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> BridgeUpdate:
+        final_body = text.strip() if isinstance(text, str) else ""
+        if error_note:
+            final_body = f"{final_body}\n\n{error_note}" if final_body else error_note
+        if not final_body and attachments:
+            noun = "anexo" if len(attachments) == 1 else "anexos"
+            final_body = f"Enviei {len(attachments)} {noun}."
+        formatted = self._format_final_reply(final_body) if final_body else None
+        return BridgeUpdate("final", formatted, attachments=attachments, details=details or {})
+
     def _format_action_text(self, event: dict[str, object], normalized: str) -> str:
         event_type = event.get("event")
         details = event.get("details", {})
@@ -168,24 +216,25 @@ class BridgeTurnRunner:
                 self.session_store.set_thread_id(session_key, thread_id)
 
             text = event.get("text")
-            if not isinstance(text, str):
-                continue
-
-            normalized = text.strip()
-            if not normalized:
-                continue
+            normalized = text.strip() if isinstance(text, str) else ""
 
             if event_type == "commentary":
+                if not normalized:
+                    continue
                 if self.show_commentary:
                     yield BridgeUpdate("commentary", self._format_commentary_reply(normalized))
                 continue
 
             if event_type == "reasoning_summary":
+                if not normalized:
+                    continue
                 if self.show_reasoning:
                     yield BridgeUpdate("reasoning", self._format_reasoning_reply(normalized))
                 continue
 
             if event_type in {"action", "approval_request", "input_request"}:
+                if not normalized:
+                    continue
                 pending_request: PendingBridgeRequest | None = None
                 should_emit = self.show_actions
                 if event_type in {"approval_request", "input_request"}:
@@ -211,11 +260,14 @@ class BridgeTurnRunner:
                 continue
 
             if event_type == "final":
-                yield BridgeUpdate("final", self._format_final_reply(normalized))
+                attachments = self._extract_attachments(event)
+                error_note = self._extract_attachment_error_note(event)
+                yield self._build_final_update(text=normalized, attachments=attachments, error_note=error_note)
                 continue
 
             if event_type == "error":
-                yield BridgeUpdate("final", self._format_final_reply(f"Erro do bridge: {normalized}"))
+                error_text = normalized or str(event.get("message") or "erro desconhecido")
+                yield BridgeUpdate("final", self._format_final_reply(f"Erro do bridge: {error_text}"))
 
     async def recover_pending_turn(
         self,
@@ -243,9 +295,16 @@ class BridgeTurnRunner:
                 if status == "completed":
                     final_text = self._extract_turn_final_text(turn)
                     if final_text:
-                        return BridgeUpdate(
-                            "final",
-                            self._format_final_reply(final_text),
+                        parsed = extract_attachment_directives(final_text)
+                        error_note = None
+                        if parsed.errors:
+                            error_note = "Obs.: não consegui anexar alguns arquivos:\n" + "\n".join(
+                                f"- {item}" for item in parsed.errors
+                            )
+                        return self._build_final_update(
+                            text=parsed.text,
+                            attachments=parsed.attachments,
+                            error_note=error_note,
                             details={"recovered": True, "turnStatus": status},
                         )
                     return None

@@ -55,3 +55,17 @@ class ModelTests(unittest.TestCase):
                 "metadata": {},
             },
         )
+
+    def test_attachment_round_trips_local_path_and_caption(self) -> None:
+        attachment = Attachment(
+            kind="image",
+            mime_type="image/png",
+            local_path="/tmp/demo.png",
+            file_name="demo.png",
+            caption="Screenshot atual",
+        )
+
+        self.assertEqual(
+            Attachment.from_dict(attachment.to_dict()),
+            attachment,
+        )

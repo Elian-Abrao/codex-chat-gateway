@@ -144,7 +144,8 @@ The first real runtime integration target is intentionally narrow:
 
 - one WhatsApp group
 - messages inside that group
-- text-only forwarding
+- text-first forwarding
+- outbound delivery of existing local files and images referenced by the bridge
 - runtime response logged locally
 - automatic reply back to the same group by default
 

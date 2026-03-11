@@ -46,6 +46,63 @@ function ensureDirectory(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function normalizeAttachmentKind(attachment) {
+  if (attachment.kind) {
+    return attachment.kind;
+  }
+  const mimeType = attachment.mimeType || "";
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  return "file";
+}
+
+function attachmentLocalPath(attachment) {
+  const localPath = attachment.localPath || null;
+  if (!localPath) {
+    throw new Error("Outbound attachment is missing localPath");
+  }
+  const resolved = path.resolve(localPath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Outbound attachment file not found: ${resolved}`);
+  }
+  return resolved;
+}
+
+function buildAttachmentMessage(attachment, captionText) {
+  const localPath = attachmentLocalPath(attachment);
+  const kind = normalizeAttachmentKind(attachment);
+  const mimetype = attachment.mimeType || undefined;
+  const fileName = attachment.fileName || path.basename(localPath);
+  const caption = attachment.caption || captionText || undefined;
+
+  if (kind === "image") {
+    return {
+      image: { url: localPath },
+      mimetype,
+      fileName,
+      caption,
+    };
+  }
+  if (kind === "audio") {
+    return {
+      audio: { url: localPath },
+      mimetype,
+      fileName,
+      ptt: false,
+    };
+  }
+  return {
+    document: { url: localPath },
+    mimetype,
+    fileName,
+    caption,
+  };
+}
+
 function extractText(message) {
   if (!message) {
     return null;
@@ -273,15 +330,51 @@ async function sendMessage(payload) {
   if (!payload.chatId) {
     throw new Error("Outbound message is missing chatId");
   }
-  if (!payload.text) {
-    throw new Error("Only outbound text is supported in the first WhatsApp MVP");
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const text = typeof payload.text === "string" ? payload.text : null;
+  if (!text && attachments.length === 0) {
+    throw new Error("Outbound message is missing both text and attachments");
   }
-  const result = await sock.sendMessage(payload.chatId, {
-    text: payload.text,
-    linkPreview: null,
-  });
-  if (result?.key?.id) {
-    sentMessageIds.add(result.key.id);
+
+  if (attachments.length === 0) {
+    const result = await sock.sendMessage(payload.chatId, {
+      text,
+      linkPreview: null,
+    });
+    if (result?.key?.id) {
+      sentMessageIds.add(result.key.id);
+    }
+    return;
+  }
+
+  let textConsumed = false;
+  for (let index = 0; index < attachments.length; index += 1) {
+    const attachment = attachments[index];
+    const kind = normalizeAttachmentKind(attachment);
+    const canCarryCaption = kind === "image" || kind === "file";
+    const result = await sock.sendMessage(
+      payload.chatId,
+      buildAttachmentMessage(
+        attachment,
+        !textConsumed && canCarryCaption ? text : null,
+      ),
+    );
+    if (result?.key?.id) {
+      sentMessageIds.add(result.key.id);
+    }
+    if (!textConsumed && canCarryCaption && text) {
+      textConsumed = true;
+    }
+  }
+
+  if (text && !textConsumed) {
+    const result = await sock.sendMessage(payload.chatId, {
+      text,
+      linkPreview: null,
+    });
+    if (result?.key?.id) {
+      sentMessageIds.add(result.key.id);
+    }
   }
 }
 

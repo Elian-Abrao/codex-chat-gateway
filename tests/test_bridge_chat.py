@@ -82,6 +82,24 @@ class FakeBridgeClient(BridgeClient):
                 "details": {"questions": [{"id": "city", "label": "City"}]},
             }
             return
+        if prompt == "send attachment":
+            yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
+            yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
+            yield {
+                "event": "final",
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "text": "Segue o print.",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "localPath": "/tmp/demo.png",
+                        "fileName": "demo.png",
+                        "mimeType": "image/png",
+                    }
+                ],
+            }
+            return
         yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
         yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
         yield {
@@ -257,6 +275,37 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 "[Codex]\nok",
             ],
         )
+
+    async def test_gateway_sends_final_attachments_back_to_whatsapp(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=InMemorySessionStore(),
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_1",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="send attachment",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+        await self._drain_gateway(gateway)
+
+        self.assertEqual(len(adapter.sent_messages), 1)
+        outbound = adapter.sent_messages[0]
+        self.assertEqual(outbound.text, "[Codex]\nSegue o print.")
+        self.assertEqual(len(outbound.attachments), 1)
+        self.assertEqual(outbound.attachments[0].local_path, "/tmp/demo.png")
+        self.assertEqual(outbound.attachments[0].mime_type, "image/png")
 
     async def test_gateway_can_run_in_log_only_mode(self) -> None:
         adapter = FakeAdapter()

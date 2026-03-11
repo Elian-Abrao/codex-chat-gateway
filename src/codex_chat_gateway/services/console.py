@@ -8,6 +8,7 @@ from contextlib import suppress
 from typing import Callable
 
 from ..channel_adapters import ChannelAdapter
+from ..models import Attachment
 from ..models import InboundMessage
 from ..models import OutboundMessage
 from ..runtime_client import BridgeClient
@@ -107,6 +108,13 @@ class ConsoleGateway:
     def _format_codex(self, mode: str, text: str) -> str:
         return f"[codex][{mode}]\n{text}"
 
+    def _format_attachment(self, attachment: Attachment) -> str:
+        label = attachment.file_name or attachment.local_path or attachment.url or "<anexo>"
+        location = attachment.local_path or attachment.url
+        if location and location != label:
+            return f"{label} -> {location}"
+        return label
+
     def _should_forward_update_to_whatsapp(self, mode: str, *, force: bool = False) -> bool:
         if force:
             return self.send_bridge_replies
@@ -135,6 +143,33 @@ class ConsoleGateway:
         await self.adapter.send_message(outbound)
         self._write(self._format_outbound(source, text))
         return chat_id
+
+    async def _send_bridge_reply_to_whatsapp(
+        self,
+        message: InboundMessage,
+        *,
+        text: str | None,
+        attachments: list[Attachment] | None,
+        mode: str,
+    ) -> None:
+        outbound_attachments = list(attachments or [])
+        normalized = text.strip() if isinstance(text, str) else None
+        if not normalized and not outbound_attachments:
+            return
+        await self.adapter.send_message(
+            OutboundMessage.from_inbound(
+                message,
+                text=normalized,
+                attachments=outbound_attachments,
+                metadata={"mode": mode},
+            )
+        )
+        parts: list[str] = []
+        if normalized:
+            parts.append(normalized)
+        if outbound_attachments:
+            parts.extend(f"[attachment] {self._format_attachment(item)}" for item in outbound_attachments)
+        self._write(self._format_outbound("bridge", "\n".join(parts)))
 
     def _track_task(self, task: asyncio.Task[None]) -> None:
         self._turn_tasks.add(task)
@@ -241,15 +276,18 @@ class ConsoleGateway:
                     thread_id=pending_request.thread_id,
                     turn_id=pending_request.turn_id,
                 )
-                if recovered is not None and recovered.text:
-                    self._write(self._format_codex(recovered.mode, recovered.text))
+                if recovered is not None and (recovered.text or recovered.attachments):
+                    if recovered.text:
+                        self._write(self._format_codex(recovered.mode, recovered.text))
+                    if recovered.attachments:
+                        for attachment in recovered.attachments:
+                            self._write(self._format_codex("attachment", self._format_attachment(attachment)))
                     if self._should_forward_update_to_whatsapp(recovered.mode):
-                        await self.adapter.send_message(
-                            OutboundMessage.from_inbound(
-                                message,
-                                text=recovered.text,
-                                metadata={"mode": f"bridge_{recovered.mode}"},
-                            )
+                        await self._send_bridge_reply_to_whatsapp(
+                            message,
+                            text=recovered.text,
+                            attachments=recovered.attachments,
+                            mode=f"bridge_{recovered.mode}",
                         )
             return True
         if action == "answer":
@@ -295,15 +333,18 @@ class ConsoleGateway:
                     thread_id=pending_request.thread_id,
                     turn_id=pending_request.turn_id,
                 )
-                if recovered is not None and recovered.text:
-                    self._write(self._format_codex(recovered.mode, recovered.text))
+                if recovered is not None and (recovered.text or recovered.attachments):
+                    if recovered.text:
+                        self._write(self._format_codex(recovered.mode, recovered.text))
+                    if recovered.attachments:
+                        for attachment in recovered.attachments:
+                            self._write(self._format_codex("attachment", self._format_attachment(attachment)))
                     if self._should_forward_update_to_whatsapp(recovered.mode):
-                        await self.adapter.send_message(
-                            OutboundMessage.from_inbound(
-                                message,
-                                text=recovered.text,
-                                metadata={"mode": f"bridge_{recovered.mode}"},
-                            )
+                        await self._send_bridge_reply_to_whatsapp(
+                            message,
+                            text=recovered.text,
+                            attachments=recovered.attachments,
+                            mode=f"bridge_{recovered.mode}",
                         )
             return True
         return False
@@ -330,25 +371,26 @@ class ConsoleGateway:
                     self.session_store.clear_pending_request(session_key)
                 if text:
                     self._write(self._format_codex(update.mode, text))
-                    if self._should_forward_update_to_whatsapp(update.mode, force=force_forward):
-                        await self.adapter.send_message(
-                            OutboundMessage.from_inbound(
-                                message,
-                                text=text,
-                                metadata={"mode": f"bridge_{update.mode}"},
-                            )
-                        )
+                if update.attachments:
+                    for attachment in update.attachments:
+                        self._write(self._format_codex("attachment", self._format_attachment(attachment)))
+                if self._should_forward_update_to_whatsapp(update.mode, force=force_forward):
+                    await self._send_bridge_reply_to_whatsapp(
+                        message,
+                        text=text,
+                        attachments=update.attachments,
+                        mode=f"bridge_{update.mode}",
+                    )
         except Exception as exc:
             self.session_store.clear_pending_request(session_key)
             text = f"[Codex]\nErro do gateway: {exc}"
             self._write(self._format_codex("error", text))
             if self.send_bridge_replies:
-                await self.adapter.send_message(
-                    OutboundMessage.from_inbound(
-                        message,
-                        text=text,
-                        metadata={"mode": "bridge_final"},
-                    )
+                await self._send_bridge_reply_to_whatsapp(
+                    message,
+                    text=text,
+                    attachments=[],
+                    mode="bridge_final",
                 )
         finally:
             self.session_store.set_active_turn(session_key, False)

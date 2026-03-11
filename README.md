@@ -222,6 +222,7 @@ What this mode does right now:
 - consumes the stable consumer stream from the bridge
 - creates and reuses one `threadId` per WhatsApp group
 - replies back to the same WhatsApp group with the final answer formatted as `[Codex]`
+- sends existing local files and images back to WhatsApp when the bridge returns normalized attachments in the final reply
 - keeps pending approvals and input requests per WhatsApp group session
 - persists the session store to `.state/sessions.json` by default so `threadId` and pending requests survive restart
 - when a pending request is answered after restart, the gateway now recovers the final answer for that same turn from the bridge
@@ -236,6 +237,13 @@ Optional visibility flags:
 - `--full-auto` is a shortcut for `--approval-policy never --sandbox danger-full-access`
 
 Pending bridge requests always surface in the WhatsApp group, even when `--show-actions` is off, so the user can continue the turn.
+
+Current attachment flow:
+
+- the agent can reference an existing local file through the bridge directive
+  - `[bridge-attachment path="/absolute/path/to/file.ext"]`
+- `codex-runtime-bridge` strips that directive from the visible final text and exposes the file as a normalized attachment
+- `codex-chat-gateway` sends that local file to WhatsApp as an image, audio file, or document depending on the detected file type
 
 Session persistence flags:
 

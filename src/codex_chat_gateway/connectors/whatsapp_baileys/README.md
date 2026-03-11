@@ -29,8 +29,13 @@ Gateway -> worker:
 
 - `{"type":"send_message","message":{...}}`
 
+Outbound messages may now include:
+
+- plain `text`
+- `attachments` with `localPath` for existing local files the worker should send to WhatsApp
+- mixed text + attachment replies, where the worker uses the text as a caption when the WhatsApp media type supports it
+
 ## Environment Variables
 
 - `WHATSAPP_AUTH_DIR`
 - `WHATSAPP_ALLOWLIST`
-

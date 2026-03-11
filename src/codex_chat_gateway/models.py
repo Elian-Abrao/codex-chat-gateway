@@ -10,8 +10,10 @@ class Attachment:
     kind: str
     mime_type: str | None = None
     url: str | None = None
+    local_path: str | None = None
     file_name: str | None = None
     size_bytes: int | None = None
+    caption: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -20,10 +22,14 @@ class Attachment:
             payload["mimeType"] = self.mime_type
         if self.url is not None:
             payload["url"] = self.url
+        if self.local_path is not None:
+            payload["localPath"] = self.local_path
         if self.file_name is not None:
             payload["fileName"] = self.file_name
         if self.size_bytes is not None:
             payload["sizeBytes"] = self.size_bytes
+        if self.caption is not None:
+            payload["caption"] = self.caption
         if self.metadata:
             payload["metadata"] = self.metadata
         return payload
@@ -34,8 +40,10 @@ class Attachment:
             kind=data["kind"],
             mime_type=data.get("mimeType"),
             url=data.get("url"),
+            local_path=data.get("localPath"),
             file_name=data.get("fileName"),
             size_bytes=data.get("sizeBytes"),
+            caption=data.get("caption"),
             metadata=dict(data.get("metadata") or {}),
         )
 
@@ -107,6 +115,7 @@ class OutboundMessage:
         message: InboundMessage,
         *,
         text: str | None,
+        attachments: list[Attachment] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> OutboundMessage:
         return cls(
@@ -114,5 +123,6 @@ class OutboundMessage:
             chat_id=message.chat_id,
             text=text,
             reply_to_message_id=message.message_id,
+            attachments=list(attachments or []),
             metadata=metadata or {},
         )

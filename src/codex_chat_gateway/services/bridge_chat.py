@@ -7,6 +7,7 @@ import asyncio
 from contextlib import suppress
 
 from ..channel_adapters import ChannelAdapter
+from ..models import Attachment
 from ..models import InboundMessage
 from ..models import OutboundMessage
 from ..runtime_client import BridgeClient
@@ -57,16 +58,19 @@ class BridgeChatGateway:
         self,
         message: InboundMessage,
         *,
-        text: str,
+        text: str | None,
         mode: str,
+        attachments: list[Attachment] | None = None,
     ) -> None:
-        normalized = text.strip()
-        if not self.send_replies or not normalized:
+        normalized = text.strip() if isinstance(text, str) else None
+        outbound_attachments = list(attachments or [])
+        if not self.send_replies or (not normalized and not outbound_attachments):
             return
         await self.adapter.send_message(
             OutboundMessage.from_inbound(
                 message,
                 text=normalized,
+                attachments=outbound_attachments,
                 metadata={"mode": mode},
             )
         )
@@ -108,8 +112,13 @@ class BridgeChatGateway:
                 if update.mode == "final":
                     logger.info("Bridge response received assistant=%r", update.text)
                     self.session_store.clear_pending_request(session_key)
-                if text:
-                    await self._send_reply(message, text=text, mode=f"bridge_{update.mode}")
+                if text or update.attachments:
+                    await self._send_reply(
+                        message,
+                        text=text,
+                        attachments=update.attachments,
+                        mode=f"bridge_{update.mode}",
+                    )
         except Exception as exc:
             logger.exception("Bridge turn failed for chat=%s", message.chat_id, exc_info=exc)
             self.session_store.clear_pending_request(session_key)
