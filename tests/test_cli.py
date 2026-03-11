@@ -80,3 +80,21 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.show_commentary)
         self.assertTrue(args.show_reasoning)
         self.assertTrue(args.show_actions)
+
+    def test_parser_accepts_runtime_execution_flags(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "bridge-chat",
+                "--group-subject",
+                "Codex",
+                "--approval-policy",
+                "never",
+                "--sandbox",
+                "danger-full-access",
+                "--full-auto",
+            ]
+        )
+
+        self.assertEqual(args.approval_policy, "never")
+        self.assertEqual(args.sandbox, "danger-full-access")
+        self.assertTrue(args.full_auto)

@@ -202,6 +202,19 @@ codex-chat-gateway bridge-chat \
   --group-subject Codex
 ```
 
+If you want the runtime to operate with the same low-friction execution profile that works better for shell and MCP browser flows, start it with:
+
+```bash
+codex-chat-gateway bridge-chat \
+  --channel whatsapp-baileys \
+  --auth-dir .state/whatsapp \
+  --bridge-url http://127.0.0.1:8787 \
+  --group-subject Codex \
+  --full-auto
+```
+
+`--full-auto` is a gateway convenience flag. It forwards the official Codex runtime settings `approvalPolicy=never` and `sandbox=danger-full-access` to the bridge for each turn.
+
 What this mode does right now:
 
 - watches all messages from the WhatsApp group named `Codex`
@@ -216,6 +229,9 @@ Optional visibility flags:
 - `--show-commentary` sends Codex andamento messages back to WhatsApp in smaller progress messages
 - `--show-reasoning` sends reasoning summaries back to WhatsApp in smaller progress messages
 - `--show-actions` sends tool and command activity back to WhatsApp in quoted action blocks
+- `--approval-policy <value>` forwards the official Codex approval policy for each turn
+- `--sandbox <value>` forwards the official Codex sandbox mode for each turn
+- `--full-auto` is a shortcut for `--approval-policy never --sandbox danger-full-access`
 
 Pending bridge requests always surface in the WhatsApp group, even when `--show-actions` is off, so the user can continue the turn.
 
@@ -237,6 +253,7 @@ codex-chat-gateway bridge-chat \
   --auth-dir .state/whatsapp \
   --bridge-url http://127.0.0.1:8787 \
   --group-subject Codex \
+  --full-auto \
   --show-commentary \
   --show-reasoning \
   --show-actions

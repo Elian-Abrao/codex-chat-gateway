@@ -35,6 +35,8 @@ class ConsoleGateway:
     show_reasoning: bool = False
     show_actions: bool = False
     send_bridge_replies: bool = True
+    approval_policy: str | None = None
+    sandbox: str | None = None
     output: Callable[[str], None] = print
     _active_chat_id: str | None = None
     _manual_message_counter: int = 0
@@ -50,6 +52,8 @@ class ConsoleGateway:
             show_commentary=True,
             show_actions=True,
             show_reasoning=self.show_reasoning,
+            approval_policy=self.approval_policy,
+            sandbox=self.sandbox,
         )
 
     def _write(self, line: str) -> None:
@@ -437,6 +441,9 @@ class ConsoleGateway:
             )
             for task in pending:
                 task.cancel()
+            for task in pending:
+                with suppress(asyncio.CancelledError):
+                    await task
             for task in done:
                 if task.cancelled():
                     continue
@@ -449,4 +456,8 @@ class ConsoleGateway:
             for task in tuple(self._turn_tasks):
                 with suppress(asyncio.CancelledError):
                     await task
+            with suppress(asyncio.CancelledError):
+                await adapter_task
+            with suppress(asyncio.CancelledError):
+                await stdin_task
             await self.adapter.close()

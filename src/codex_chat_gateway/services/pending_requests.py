@@ -11,6 +11,29 @@ PendingCommandAction = Literal["approve", "reject", "answer", "pending"]
 APPROVE_ALIASES = ("approve", "approved", "allow", "accept", "yes", "true", "continue")
 REJECT_ALIASES = ("reject", "rejected", "deny", "decline", "no", "false", "cancel")
 MCP_TOOL_APPROVAL_PREFIX = "mcp_tool_call_approval_"
+APPROVE_OPTION_ALIASES = {
+    *APPROVE_ALIASES,
+    "approve_once",
+    "approve_once.",
+    "approve_this_session",
+    "approved_for_session",
+    "approved_with_amendment",
+    "approved_with_execpolicy_amendment",
+    "approved_with_network_policy_allow",
+    "run_the_tool_and_continue.",
+    "run_the_tool_and_continue",
+}
+REJECT_OPTION_ALIASES = {
+    *REJECT_ALIASES,
+    "denied",
+    "declined",
+    "abort",
+    "declined_with_network_policy_deny",
+    "decline_this_tool_call_and_continue.",
+    "decline_this_tool_call_and_continue",
+    "cancel_this_tool_call",
+    "cancel_this_tool_call.",
+}
 
 
 @dataclass(slots=True)
@@ -116,7 +139,7 @@ def build_pending_approval_result(
     action: Literal["approve", "reject"],
 ) -> dict[str, Any]:
     if pending.kind == "approval_request":
-        return {"decision": "approve" if action == "approve" else "decline"}
+        return {"decision": _select_approval_decision(pending.details, action)}
 
     question = _extract_single_question(pending.details)
     if not _is_mcp_tool_approval_question(question):
@@ -228,12 +251,12 @@ def _normalize_question_decision(question: dict[str, Any] | None, decision: str)
     normalized_options = {option: _normalize_option_value(option) for option in options}
     if normalized in APPROVE_ALIASES:
         for option, option_normalized in normalized_options.items():
-            if option_normalized in {"approve", "approved", "allow", "accept", "yes", "true", "continue"}:
+            if option_normalized in APPROVE_OPTION_ALIASES:
                 return option
         return "approve"
     if normalized in REJECT_ALIASES:
         for option, option_normalized in normalized_options.items():
-            if option_normalized in {"reject", "rejected", "decline", "deny", "no", "false", "cancel"}:
+            if option_normalized in REJECT_OPTION_ALIASES:
                 return option
         return "reject"
     return decision
@@ -241,3 +264,46 @@ def _normalize_question_decision(question: dict[str, Any] | None, decision: str)
 
 def _normalize_option_value(option: str) -> str:
     return option.strip().lower().replace(" ", "_")
+
+
+def _extract_available_decisions(details: dict[str, Any]) -> list[Any]:
+    for key in ("availableDecisions", "available_decisions"):
+        decisions = details.get(key)
+        if isinstance(decisions, list):
+            return decisions
+    return []
+
+
+def _select_approval_decision(
+    details: dict[str, Any],
+    action: Literal["approve", "reject"],
+) -> Any:
+    decisions = _extract_available_decisions(details)
+    if not decisions:
+        return "approve" if action == "approve" else "decline"
+
+    alias_set = APPROVE_OPTION_ALIASES if action == "approve" else REJECT_OPTION_ALIASES
+    string_match: str | None = None
+    dict_match: dict[str, Any] | None = None
+
+    for decision in decisions:
+        if isinstance(decision, str):
+            if _normalize_option_value(decision) in alias_set:
+                string_match = decision
+                break
+            continue
+        if not isinstance(decision, dict) or len(decision) != 1:
+            continue
+        [(decision_name, decision_payload)] = decision.items()
+        if _normalize_option_value(str(decision_name)) not in alias_set:
+            continue
+        dict_match = {decision_name: decision_payload}
+        if action == "reject":
+            break
+
+    if string_match is not None:
+        return string_match
+    if dict_match is not None:
+        return dict_match
+
+    return decisions[0] if action == "approve" else decisions[-1]

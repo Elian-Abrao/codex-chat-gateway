@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 import logging
 from pathlib import Path
 
@@ -13,6 +14,11 @@ from .services import ConsoleGateway
 from .services import EchoGateway
 from .session_store import InMemorySessionStore
 from .version import __version__
+
+
+def _run_async(coro: object) -> None:
+    with suppress(KeyboardInterrupt):
+        asyncio.run(coro)  # type: ignore[arg-type]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     console_parser.add_argument("--allow-from", action="append", default=[])
     console_parser.add_argument("--group-subject", action="append", default=[])
     console_parser.add_argument("--group-chat-id", action="append", default=[])
+    console_parser.add_argument("--approval-policy")
+    console_parser.add_argument("--sandbox")
+    console_parser.add_argument(
+        "--full-auto",
+        action="store_true",
+        help="Use the bridge with approvalPolicy=never and sandbox=danger-full-access.",
+    )
     console_parser.add_argument(
         "--show-commentary",
         action="store_true",
@@ -75,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_parser.add_argument("--allow-from", action="append", default=[])
     bridge_parser.add_argument("--group-subject", action="append", default=[])
     bridge_parser.add_argument("--group-chat-id", action="append", default=[])
+    bridge_parser.add_argument("--approval-policy")
+    bridge_parser.add_argument("--sandbox")
+    bridge_parser.add_argument(
+        "--full-auto",
+        action="store_true",
+        help="Use the bridge with approvalPolicy=never and sandbox=danger-full-access.",
+    )
     bridge_parser.add_argument(
         "--show-commentary",
         action="store_true",
@@ -101,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if getattr(args, "full_auto", False):
+        if getattr(args, "approval_policy", None) is None:
+            args.approval_policy = "never"
+        if getattr(args, "sandbox", None) is None:
+            args.sandbox = "danger-full-access"
     if args.command == "version":
         print(__version__)
         return
@@ -115,7 +140,7 @@ def main() -> None:
             auth_dir=Path(args.auth_dir),
             cwd=Path(args.cwd),
         )
-        asyncio.run(EchoGateway(adapter=adapter, reply_prefix=args.reply_prefix).run())
+        _run_async(EchoGateway(adapter=adapter, reply_prefix=args.reply_prefix).run())
         return
     if args.command == "console":
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -128,7 +153,7 @@ def main() -> None:
             cwd=Path(args.cwd),
             include_from_me=True,
         )
-        asyncio.run(
+        _run_async(
             ConsoleGateway(
                 adapter=adapter,
                 bridge_client=BridgeClient(args.bridge_url) if args.bridge_url else None,
@@ -138,6 +163,8 @@ def main() -> None:
                 show_reasoning=args.show_reasoning,
                 show_actions=args.show_actions,
                 send_bridge_replies=not args.log_only,
+                approval_policy=args.approval_policy,
+                sandbox=args.sandbox,
             ).run()
         )
         return
@@ -162,7 +189,9 @@ def main() -> None:
             show_commentary=args.show_commentary,
             show_reasoning=args.show_reasoning,
             show_actions=args.show_actions,
+            approval_policy=args.approval_policy,
+            sandbox=args.sandbox,
         )
-        asyncio.run(gateway.run())
+        _run_async(gateway.run())
         return
     raise SystemExit(f"unknown command: {args.command}")

@@ -37,6 +37,8 @@ class BridgeChatGateway:
     show_commentary: bool = False
     show_reasoning: bool = False
     show_actions: bool = False
+    approval_policy: str | None = None
+    sandbox: str | None = None
     _turn_tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
     @property
@@ -47,6 +49,8 @@ class BridgeChatGateway:
             show_commentary=self.show_commentary,
             show_reasoning=self.show_reasoning,
             show_actions=self.show_actions,
+            approval_policy=self.approval_policy,
+            sandbox=self.sandbox,
         )
 
     async def _send_reply(

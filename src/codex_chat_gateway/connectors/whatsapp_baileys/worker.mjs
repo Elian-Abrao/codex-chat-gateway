@@ -240,7 +240,10 @@ async function sendMessage(payload) {
   if (!payload.text) {
     throw new Error("Only outbound text is supported in the first WhatsApp MVP");
   }
-  const result = await sock.sendMessage(payload.chatId, { text: payload.text });
+  const result = await sock.sendMessage(payload.chatId, {
+    text: payload.text,
+    linkPreview: null,
+  });
   if (result?.key?.id) {
     sentMessageIds.add(result.key.id);
   }

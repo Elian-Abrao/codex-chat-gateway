@@ -52,6 +52,8 @@ class FakeBridgeClient(BridgeClient):
                 "prompt": prompt,
                 "thread_id": thread_id,
                 "summary": kwargs.get("summary"),
+                "approvalPolicy": kwargs.get("approvalPolicy"),
+                "sandbox": kwargs.get("sandbox"),
             }
         )
         if prompt == "needs approval":
@@ -177,7 +179,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             bridge.stream_calls,
-            [{"prompt": "Oi", "thread_id": None, "summary": "none"}],
+            [{"prompt": "Oi", "thread_id": None, "summary": "none", "approvalPolicy": None, "sandbox": None}],
         )
         self.assertEqual(store.get("whatsapp:123@g.us").thread_id, "thr_1")
         self.assertEqual([message.text for message in adapter.sent_messages], ["[Codex]\nok"])
@@ -211,7 +213,15 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             bridge.stream_calls,
-            [{"prompt": "Oi", "thread_id": None, "summary": "detailed"}],
+            [
+                {
+                    "prompt": "Oi",
+                    "thread_id": None,
+                    "summary": "detailed",
+                    "approvalPolicy": None,
+                    "sandbox": None,
+                }
+            ],
         )
         self.assertEqual(len(adapter.sent_messages), 4)
         self.assertEqual(
@@ -250,6 +260,46 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
         await self._drain_gateway(gateway)
 
         self.assertEqual(adapter.sent_messages, [])
+
+    async def test_gateway_passes_runtime_execution_profile(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=InMemorySessionStore(),
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+            send_replies=False,
+            approval_policy="never",
+            sandbox="danger-full-access",
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_profile",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="Oi",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+        await self._drain_gateway(gateway)
+
+        self.assertEqual(
+            bridge.stream_calls,
+            [
+                {
+                    "prompt": "Oi",
+                    "thread_id": None,
+                    "summary": "none",
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
+                }
+            ],
+        )
 
     async def test_gateway_surfaces_pending_approval_requests(self) -> None:
         adapter = FakeAdapter()
@@ -297,7 +347,14 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 kind="approval_request",
                 text="Approval required for command execution.",
                 approval_type="command_execution",
-                details={"command": "rm -rf /tmp/demo"},
+                details={
+                    "command": "rm -rf /tmp/demo",
+                    "availableDecisions": [
+                        "accept",
+                        {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["rm", "-rf"]}},
+                        "cancel",
+                    ],
+                },
             ),
         )
         gateway = BridgeChatGateway(
@@ -322,7 +379,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             bridge.respond_calls,
-            [{"request_id": "req_1", "result": {"decision": "approve"}, "error": None}],
+            [{"request_id": "req_1", "result": {"decision": "accept"}, "error": None}],
         )
         self.assertIsNone(store.get("whatsapp:123@g.us").pending_request)
         self.assertEqual(
@@ -383,7 +440,19 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
                 request_id="req_3",
                 kind="input_request",
                 text="User input is required to continue.",
-                details={"questions": [{"id": "mcp_tool_call_approval_call_abc123"}]},
+                details={
+                    "questions": [
+                        {
+                            "id": "mcp_tool_call_approval_call_abc123",
+                            "options": [
+                                {"label": "Approve Once"},
+                                {"label": "Approve this Session"},
+                                {"label": "Deny"},
+                                {"label": "Cancel"},
+                            ],
+                        }
+                    ]
+                },
             ),
         )
         gateway = BridgeChatGateway(
@@ -411,7 +480,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "request_id": "req_3",
-                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "approve"}},
+                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "Approve Once"}},
                     "error": None,
                 }
             ],

@@ -63,6 +63,12 @@ class PendingRequestFormattingTests(unittest.TestCase):
                 "questions": [
                     {
                         "id": "mcp_tool_call_approval_call_abc123",
+                        "options": [
+                            {"label": "Approve Once", "description": "Run the tool and continue."},
+                            {"label": "Approve this Session", "description": "Run the tool and remember this choice for this session."},
+                            {"label": "Deny", "description": "Decline this tool call and continue."},
+                            {"label": "Cancel", "description": "Cancel this tool call"},
+                        ],
                     }
                 ]
             },
@@ -71,11 +77,11 @@ class PendingRequestFormattingTests(unittest.TestCase):
         self.assertTrue(pending_accepts_approval_commands(pending))
         self.assertEqual(
             build_pending_approval_result(pending, "approve"),
-            {"answers": {"mcp_tool_call_approval_call_abc123": "approve"}},
+            {"answers": {"mcp_tool_call_approval_call_abc123": "Approve Once"}},
         )
         self.assertEqual(
             build_pending_approval_result(pending, "reject"),
-            {"answers": {"mcp_tool_call_approval_call_abc123": "reject"}},
+            {"answers": {"mcp_tool_call_approval_call_abc123": "Deny"}},
         )
 
     def test_answer_approve_maps_to_single_mcp_approval_question(self) -> None:
@@ -87,6 +93,12 @@ class PendingRequestFormattingTests(unittest.TestCase):
                 "questions": [
                     {
                         "id": "mcp_tool_call_approval_call_abc123",
+                        "options": [
+                            {"label": "Approve Once"},
+                            {"label": "Approve this Session"},
+                            {"label": "Deny"},
+                            {"label": "Cancel"},
+                        ],
                     }
                 ]
             },
@@ -94,5 +106,29 @@ class PendingRequestFormattingTests(unittest.TestCase):
 
         self.assertEqual(
             build_input_answers(pending, "approve"),
-            {"mcp_tool_call_approval_call_abc123": "approve"},
+            {"mcp_tool_call_approval_call_abc123": "Approve Once"},
+        )
+
+    def test_command_approval_prefers_available_accept_and_cancel_decisions(self) -> None:
+        pending = PendingBridgeRequest(
+            request_id="req_5",
+            kind="approval_request",
+            text="Approval required for command execution.",
+            approval_type="command_execution",
+            details={
+                "availableDecisions": [
+                    "accept",
+                    {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["mkdir", "-p"]}},
+                    "cancel",
+                ]
+            },
+        )
+
+        self.assertEqual(
+            build_pending_approval_result(pending, "approve"),
+            {"decision": "accept"},
+        )
+        self.assertEqual(
+            build_pending_approval_result(pending, "reject"),
+            {"decision": "cancel"},
         )

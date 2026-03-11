@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from codex_chat_gateway.channel_adapters.base import ChannelAdapter
 from codex_chat_gateway.models import InboundMessage
@@ -32,15 +33,39 @@ class FakeAdapter(ChannelAdapter):
         return None
 
 
+class BlockingAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+        self._waiter = asyncio.Event()
+
+    async def wait(self) -> None:
+        await self._waiter.wait()
+
+    async def close(self) -> None:
+        self.closed = True
+        self._waiter.set()
+
+
 class FakeBridgeClient(BridgeClient):
     def __init__(self, base_url: str) -> None:
         super().__init__(base_url)
         self.respond_calls: list[dict[str, object]] = []
+        self.stream_calls: list[dict[str, object]] = []
 
     async def chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
         raise AssertionError("console tests should use stream_consumer_chat")
 
     async def stream_consumer_chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
+        self.stream_calls.append(
+            {
+                "prompt": prompt,
+                "thread_id": thread_id,
+                "summary": kwargs.get("summary"),
+                "approvalPolicy": kwargs.get("approvalPolicy"),
+                "sandbox": kwargs.get("sandbox"),
+            }
+        )
         if prompt == "needs approval":
             yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
             yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
@@ -159,6 +184,40 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[codex][status]\nProcessando...", terminal)
         self.assertIn("[codex][final]\n[Codex]\nok", terminal)
 
+    async def test_console_passes_runtime_execution_profile(self) -> None:
+        adapter = FakeAdapter()
+        terminal: list[str] = []
+        bridge = FakeBridgeClient("http://127.0.0.1:8787")
+        gateway = ConsoleGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            allowed_group_subjects=set(),
+            allowed_group_chat_ids={"123@g.us"},
+            send_bridge_replies=False,
+            output=terminal.append,
+            approval_policy="never",
+            sandbox="danger-full-access",
+        )
+
+        keep_going = await gateway.handle_console_line("/codex ping")
+        await self._drain_gateway(gateway)
+
+        self.assertTrue(keep_going)
+        self.assertEqual(adapter.sent_messages, [])
+        self.assertIn("[codex][final]\n[Codex]\nok", terminal)
+        self.assertEqual(
+            bridge.stream_calls,
+            [
+                {
+                    "prompt": "ping",
+                    "thread_id": None,
+                    "summary": "none",
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
+                }
+            ],
+        )
+
     async def test_console_surfaces_pending_approval_requests(self) -> None:
         adapter = FakeAdapter()
         terminal: list[str] = []
@@ -203,7 +262,14 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
                 kind="approval_request",
                 text="Approval required for command execution.",
                 approval_type="command_execution",
-                details={"command": "rm -rf /tmp/demo"},
+                details={
+                    "command": "rm -rf /tmp/demo",
+                    "availableDecisions": [
+                        "accept",
+                        {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["rm", "-rf"]}},
+                        "cancel",
+                    ],
+                },
             ),
         )
 
@@ -212,7 +278,7 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(keep_going)
         self.assertEqual(
             bridge.respond_calls,
-            [{"request_id": "req_1", "result": {"decision": "approve"}, "error": None}],
+            [{"request_id": "req_1", "result": {"decision": "accept"}, "error": None}],
         )
         self.assertIsNone(gateway.session_store.get("whatsapp:123@g.us").pending_request)
         self.assertEqual(
@@ -273,7 +339,19 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
                 request_id="req_3",
                 kind="input_request",
                 text="User input is required to continue.",
-                details={"questions": [{"id": "mcp_tool_call_approval_call_abc123"}]},
+                details={
+                    "questions": [
+                        {
+                            "id": "mcp_tool_call_approval_call_abc123",
+                            "options": [
+                                {"label": "Approve Once"},
+                                {"label": "Approve this Session"},
+                                {"label": "Deny"},
+                                {"label": "Cancel"},
+                            ],
+                        }
+                    ]
+                },
             ),
         )
 
@@ -285,7 +363,7 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "request_id": "req_3",
-                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "approve"}},
+                    "result": {"answers": {"mcp_tool_call_approval_call_abc123": "Approve Once"}},
                     "error": None,
                 }
             ],
@@ -333,3 +411,20 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
             "[codex][action]\n[Codex • ações]\n> aprovação necessária para comando: rm -rf /tmp/demo\n> use /approve ou /reject",
             terminal,
         )
+
+    async def test_console_run_exits_cleanly_on_quit(self) -> None:
+        adapter = BlockingAdapter()
+        terminal: list[str] = []
+        gateway = ConsoleGateway(
+            adapter=adapter,
+            bridge_client=None,
+            allowed_group_subjects=set(),
+            allowed_group_chat_ids={"123@g.us"},
+            output=terminal.append,
+        )
+
+        with patch("sys.stdin.readline", side_effect=["/quit\n"]):
+            await gateway.run()
+
+        self.assertTrue(adapter.closed)
+        self.assertIn("Console commands:", terminal[0])

@@ -32,6 +32,8 @@ class BridgeTurnRunner:
     show_commentary: bool = False
     show_reasoning: bool = False
     show_actions: bool = False
+    approval_policy: str | None = None
+    sandbox: str | None = None
 
     def _format_final_reply(self, text: str) -> str:
         return f"{FINAL_REPLY_HEADER}\n{text.strip()}"
@@ -108,6 +110,8 @@ class BridgeTurnRunner:
             prompt,
             thread_id=thread_id,
             summary="detailed" if self.show_reasoning else "none",
+            approvalPolicy=self.approval_policy,
+            sandbox=self.sandbox,
         ):
             event_type = event.get("event")
             event_thread_id = event.get("threadId")
