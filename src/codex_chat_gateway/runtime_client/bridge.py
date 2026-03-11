@@ -146,6 +146,12 @@ class BridgeClient:
         }
         return await asyncio.to_thread(self._post_json, "/v1/server-requests/respond", payload)
 
+    async def read_thread(self, thread_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._get_json, f"/v1/threads/{thread_id}")
+
+    async def resume_thread(self, thread_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._post_json, f"/v1/threads/{thread_id}/resume", {})
+
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
         req = request.Request(
@@ -153,6 +159,15 @@ class BridgeClient:
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
+        )
+        with request.urlopen(req, timeout=self._timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _get_json(self, path: str) -> dict[str, Any]:
+        req = request.Request(
+            f"{self._base_url}{path}",
+            headers={"Content-Type": "application/json"},
+            method="GET",
         )
         with request.urlopen(req, timeout=self._timeout) as response:
             return json.loads(response.read().decode("utf-8"))

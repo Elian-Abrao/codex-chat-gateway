@@ -52,6 +52,7 @@ class FakeBridgeClient(BridgeClient):
         super().__init__(base_url)
         self.respond_calls: list[dict[str, object]] = []
         self.stream_calls: list[dict[str, object]] = []
+        self.resume_calls: list[str] = []
 
     async def chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
         raise AssertionError("console tests should use stream_consumer_chat")
@@ -122,6 +123,29 @@ class FakeBridgeClient(BridgeClient):
             }
         )
         return {"ok": True, "requestId": request_id}
+
+    async def resume_thread(self, thread_id: str) -> dict[str, object]:
+        self.resume_calls.append(thread_id)
+        return {
+            "thread": {
+                "id": thread_id,
+                "status": {"type": "idle"},
+                "turns": [
+                    {
+                        "id": "turn_1",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "type": "agentMessage",
+                                "id": "item_1",
+                                "text": "ok",
+                                "phase": "final_answer",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
 
 
 class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -286,6 +310,48 @@ class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):
             ["[Codex • ações]\n> aprovação enviada"],
         )
         self.assertIn("[codex][action]\n[Codex • ações]\n> aprovação enviada", terminal)
+
+    async def test_console_recovers_final_reply_after_restart_resolves_pending_approval(self) -> None:
+        adapter = FakeAdapter()
+        terminal: list[str] = []
+        bridge = FakeBridgeClient("http://127.0.0.1:8787")
+        gateway = ConsoleGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            allowed_group_subjects=set(),
+            allowed_group_chat_ids={"123@g.us"},
+            output=terminal.append,
+        )
+        gateway.session_store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_1",
+                kind="approval_request",
+                text="Approval required for command execution.",
+                thread_id="thr_1",
+                turn_id="turn_1",
+                approval_type="command_execution",
+                details={"command": "rm -rf /tmp/demo"},
+            ),
+        )
+
+        keep_going = await gateway.handle_console_line("/approve")
+
+        self.assertTrue(keep_going)
+        self.assertEqual(
+            bridge.respond_calls,
+            [{"request_id": "req_1", "result": {"decision": "approve"}, "error": None}],
+        )
+        self.assertEqual(bridge.resume_calls, ["thr_1"])
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            [
+                "[Codex • ações]\n> aprovação enviada",
+                "[Codex]\nok",
+            ],
+        )
+        self.assertIn("[codex][action]\n[Codex • ações]\n> aprovação enviada", terminal)
+        self.assertIn("[codex][final]\n[Codex]\nok", terminal)
 
     async def test_console_can_resolve_pending_input_requests(self) -> None:
         adapter = FakeAdapter()

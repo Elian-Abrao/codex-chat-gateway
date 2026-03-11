@@ -12,6 +12,35 @@ from ..models import InboundMessage
 from ..models import OutboundMessage
 
 logger = logging.getLogger(__name__)
+_TRANSIENT_WORKER_MESSAGES = {
+    "failed to decrypt message",
+    "Closing open session in favor of incoming prekey bundle",
+}
+
+
+def _normalize_worker_stderr_line(line: str) -> tuple[int, str]:
+    message = line
+    payload: dict[str, Any] | None = None
+    if line.startswith("{") and line.endswith("}"):
+        try:
+            raw_payload = json.loads(line)
+        except json.JSONDecodeError:
+            raw_payload = None
+        if isinstance(raw_payload, dict):
+            payload = raw_payload
+            maybe_message = raw_payload.get("msg")
+            if isinstance(maybe_message, str) and maybe_message.strip():
+                message = maybe_message.strip()
+
+    if message in _TRANSIENT_WORKER_MESSAGES:
+        return logging.DEBUG, message
+    if message.startswith("Closing session:"):
+        return logging.DEBUG, "Closing session after prekey bundle repair."
+    if payload is not None:
+        err = payload.get("err")
+        if isinstance(err, dict) and err.get("name") == "MessageCounterError":
+            return logging.DEBUG, message
+    return logging.INFO, message
 
 
 class JsonlSubprocessChannelAdapter(ChannelAdapter):
@@ -98,7 +127,8 @@ class JsonlSubprocessChannelAdapter(ChannelAdapter):
                 return
             line = raw_line.decode("utf-8").rstrip()
             if line:
-                logger.info("%s worker: %s", self.channel_name, line)
+                level, message = _normalize_worker_stderr_line(line)
+                logger.log(level, "%s worker: %s", self.channel_name, message)
 
     async def _handle_event(self, payload: dict[str, Any]) -> None:
         event_type = payload.get("type")

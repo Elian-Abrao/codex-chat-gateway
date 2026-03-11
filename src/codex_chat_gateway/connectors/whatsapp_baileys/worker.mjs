@@ -172,11 +172,41 @@ async function createSocket() {
 
 let sock = null;
 let readyEmitted = false;
+let reconnectTimer = null;
+let reconnectDelayMs = 500;
+let socketGeneration = 0;
+
+function scheduleReconnect(reason) {
+  if (reconnectTimer) {
+    return;
+  }
+  const delayMs = reconnectDelayMs;
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
+  log("info", "Scheduling WhatsApp reconnect.", { reason, delayMs });
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      await connect();
+    } catch (error) {
+      log("error", "WhatsApp reconnect attempt failed.", {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      scheduleReconnect("retry_after_failed_reconnect");
+    }
+  }, delayMs);
+}
 
 async function connect() {
-  sock = await createSocket();
+  const generation = ++socketGeneration;
+  const socket = await createSocket();
+  sock = socket;
+  groupSubjectCache.clear();
 
-  sock.ev.on("connection.update", async (update) => {
+  socket.ev.on("connection.update", async (update) => {
+    if (sock !== socket || generation !== socketGeneration) {
+      return;
+    }
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
       qrcode.generate(qr, { small: true }, (qrText) => {
@@ -185,6 +215,7 @@ async function connect() {
       log("info", "Scan the QR code above with WhatsApp.");
     }
     if (connection === "open") {
+      reconnectDelayMs = 500;
       if (!readyEmitted) {
         readyEmitted = true;
         emit({ type: "ready", channel: "whatsapp" });
@@ -195,17 +226,22 @@ async function connect() {
     if (connection === "close") {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      sock = null;
       log("warn", "WhatsApp connection closed.", {
         statusCode: statusCode || null,
         reconnect: shouldReconnect,
       });
       if (shouldReconnect) {
-        await connect();
+        scheduleReconnect(statusCode || "unknown_close");
+        return;
       }
     }
   });
 
-  sock.ev.on("messages.upsert", async (event) => {
+  socket.ev.on("messages.upsert", async (event) => {
+    if (sock !== socket || generation !== socketGeneration) {
+      return;
+    }
     for (const msg of event.messages || []) {
       if (!msg.message) {
         continue;
@@ -273,4 +309,11 @@ input.on("line", async (line) => {
   }
 });
 
-await connect();
+try {
+  await connect();
+} catch (error) {
+  log("error", "Initial WhatsApp connection failed.", {
+    error: error instanceof Error ? error.message : String(error),
+  });
+  scheduleReconnect("initial_connect_failed");
+}

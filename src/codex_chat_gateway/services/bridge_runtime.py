@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
@@ -34,6 +35,53 @@ class BridgeTurnRunner:
     show_actions: bool = False
     approval_policy: str | None = None
     sandbox: str | None = None
+
+    def _extract_turn(self, payload: dict[str, Any], turn_id: str | None) -> dict[str, Any] | None:
+        thread = payload.get("thread")
+        if not isinstance(thread, dict):
+            return None
+        turns = thread.get("turns")
+        if not isinstance(turns, list):
+            return None
+        if turn_id is None:
+            for turn in reversed(turns):
+                if isinstance(turn, dict):
+                    return turn
+            return None
+        for turn in turns:
+            if isinstance(turn, dict) and turn.get("id") == turn_id:
+                return turn
+        return None
+
+    def _extract_turn_final_text(self, turn: dict[str, Any]) -> str | None:
+        items = turn.get("items")
+        if not isinstance(items, list):
+            return None
+        fallback_text: str | None = None
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "agentMessage":
+                continue
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            phase = item.get("phase")
+            if phase == "final_answer":
+                return text.strip()
+            if fallback_text is None:
+                fallback_text = text.strip()
+        return fallback_text
+
+    def _extract_turn_error(self, turn: dict[str, Any]) -> str | None:
+        error = turn.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        return None
 
     def _format_final_reply(self, text: str) -> str:
         return f"{FINAL_REPLY_HEADER}\n{text.strip()}"
@@ -168,3 +216,47 @@ class BridgeTurnRunner:
 
             if event_type == "error":
                 yield BridgeUpdate("final", self._format_final_reply(f"Erro do bridge: {normalized}"))
+
+    async def recover_pending_turn(
+        self,
+        *,
+        session_key: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        timeout_s: float = 20.0,
+        poll_interval_s: float = 0.5,
+    ) -> BridgeUpdate | None:
+        if thread_id is None:
+            return None
+
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            payload = await self.bridge_client.resume_thread(thread_id)
+            thread = payload.get("thread")
+            if isinstance(thread, dict):
+                resumed_thread_id = thread.get("id")
+                if isinstance(resumed_thread_id, str) and resumed_thread_id:
+                    self.session_store.set_thread_id(session_key, resumed_thread_id)
+            turn = self._extract_turn(payload, turn_id)
+            if isinstance(turn, dict):
+                status = turn.get("status")
+                if status == "completed":
+                    final_text = self._extract_turn_final_text(turn)
+                    if final_text:
+                        return BridgeUpdate(
+                            "final",
+                            self._format_final_reply(final_text),
+                            details={"recovered": True, "turnStatus": status},
+                        )
+                    return None
+                if status in {"failed", "cancelled", "interrupted"}:
+                    error_text = self._extract_turn_error(turn) or f"Turn finalizado com status {status}."
+                    return BridgeUpdate(
+                        "final",
+                        self._format_final_reply(f"Erro do bridge: {error_text}"),
+                        details={"recovered": True, "turnStatus": status},
+                    )
+
+            if asyncio.get_running_loop().time() >= deadline:
+                return None
+            await asyncio.sleep(poll_interval_s)

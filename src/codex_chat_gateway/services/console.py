@@ -211,6 +211,12 @@ class ConsoleGateway:
                     forward_to_whatsapp=forward_to_whatsapp,
                 )
                 return True
+            session = self.session_store.get_or_create(session_key)
+            should_recover = (
+                not session.active_turn
+                and pending_request.thread_id is not None
+                and self.bridge_turn_runner is not None
+            )
             try:
                 await self.bridge_client.respond_server_request(  # type: ignore[union-attr]
                     pending_request.request_id,
@@ -229,6 +235,22 @@ class ConsoleGateway:
                 format_pending_resolution_message(action),
                 forward_to_whatsapp=forward_to_whatsapp,
             )
+            if should_recover:
+                recovered = await self.bridge_turn_runner.recover_pending_turn(  # type: ignore[union-attr]
+                    session_key=session_key,
+                    thread_id=pending_request.thread_id,
+                    turn_id=pending_request.turn_id,
+                )
+                if recovered is not None and recovered.text:
+                    self._write(self._format_codex(recovered.mode, recovered.text))
+                    if self._should_forward_update_to_whatsapp(recovered.mode):
+                        await self.adapter.send_message(
+                            OutboundMessage.from_inbound(
+                                message,
+                                text=recovered.text,
+                                metadata={"mode": f"bridge_{recovered.mode}"},
+                            )
+                        )
             return True
         if action == "answer":
             if pending_request.kind != "input_request":
@@ -238,6 +260,12 @@ class ConsoleGateway:
                     forward_to_whatsapp=forward_to_whatsapp,
                 )
                 return True
+            session = self.session_store.get_or_create(session_key)
+            should_recover = (
+                not session.active_turn
+                and pending_request.thread_id is not None
+                and self.bridge_turn_runner is not None
+            )
             try:
                 answers = build_input_answers(pending_request, argument or "")
             except ValueError as exc:
@@ -261,6 +289,22 @@ class ConsoleGateway:
                 format_pending_resolution_message(action),
                 forward_to_whatsapp=forward_to_whatsapp,
             )
+            if should_recover:
+                recovered = await self.bridge_turn_runner.recover_pending_turn(  # type: ignore[union-attr]
+                    session_key=session_key,
+                    thread_id=pending_request.thread_id,
+                    turn_id=pending_request.turn_id,
+                )
+                if recovered is not None and recovered.text:
+                    self._write(self._format_codex(recovered.mode, recovered.text))
+                    if self._should_forward_update_to_whatsapp(recovered.mode):
+                        await self.adapter.send_message(
+                            OutboundMessage.from_inbound(
+                                message,
+                                text=recovered.text,
+                                metadata={"mode": f"bridge_{recovered.mode}"},
+                            )
+                        )
             return True
         return False
 

@@ -69,6 +69,7 @@ Codex runtime
   - maps a channel identity or conversation to a `threadId`
   - tracks policy-scoped metadata such as workspace, allowed commands, and display preferences
   - the first live use case is one runtime thread per WhatsApp group
+  - the current implementation persists sessions to a local JSON file so restart does not lose `threadId` or pending requests
 
 - `channel adapter`
   - owns adapter lifecycle inside the Python core
@@ -109,6 +110,18 @@ For the first WhatsApp bridge mode:
   - `/answer {"field":"value"}`
 
 This keeps the approval loop in the chat channel without reimplementing runtime semantics locally.
+
+## Current Session Persistence
+
+For the current single-user WhatsApp flow:
+
+- the default persisted session store lives next to the auth directory as `sessions.json`
+- `threadId` is reused after restart
+- pending approval and input requests are reused after restart
+- `active_turn` is intentionally reset on load so a previous crash does not leave the chat blocked forever
+- once a persisted pending request is resolved, the gateway uses bridge-side `thread/resume` to recover the final answer for that same turn
+
+This is intentionally a local single-process store, not a distributed state layer.
 
 ## Current WhatsApp Direction
 

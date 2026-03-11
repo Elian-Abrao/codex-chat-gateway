@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 
 from codex_chat_gateway.session_store import InMemorySessionStore
+from codex_chat_gateway.session_store import JsonSessionStore
 from codex_chat_gateway.session_store import PendingBridgeRequest
 
 
@@ -47,3 +50,48 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual(cleared, pending)
         self.assertIsNone(store.get("whatsapp:group").pending_request)
+
+    def test_json_session_store_persists_thread_and_pending_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "sessions.json"
+            store = JsonSessionStore(path)
+            pending = PendingBridgeRequest(
+                request_id="req_2",
+                kind="approval_request",
+                text="approval needed",
+                thread_id="thr_1",
+                details={"command": "pwd"},
+            )
+
+            store.set_thread_id("whatsapp:group", "thr_1")
+            store.set_pending_request("whatsapp:group", pending)
+            store.set_active_turn("whatsapp:group", True)
+
+            reloaded = JsonSessionStore(path)
+            session = reloaded.get("whatsapp:group")
+
+            self.assertIsNotNone(session)
+            self.assertEqual(session.thread_id, "thr_1")
+            self.assertFalse(session.active_turn)
+            self.assertIsNotNone(session.pending_request)
+            self.assertEqual(session.pending_request.request_id, "req_2")
+            self.assertEqual(session.pending_request.details["command"], "pwd")
+
+    def test_json_session_store_clears_pending_request_and_repersists(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "sessions.json"
+            store = JsonSessionStore(path)
+            store.set_pending_request(
+                "whatsapp:group",
+                PendingBridgeRequest(
+                    request_id="req_3",
+                    kind="input_request",
+                    text="question",
+                ),
+            )
+
+            cleared = store.clear_pending_request("whatsapp:group")
+            reloaded = JsonSessionStore(path)
+
+            self.assertIsNotNone(cleared)
+            self.assertIsNone(reloaded.get("whatsapp:group").pending_request)

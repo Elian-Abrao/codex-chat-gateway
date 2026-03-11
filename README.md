@@ -223,6 +223,8 @@ What this mode does right now:
 - creates and reuses one `threadId` per WhatsApp group
 - replies back to the same WhatsApp group with the final answer formatted as `[Codex]`
 - keeps pending approvals and input requests per WhatsApp group session
+- persists the session store to `.state/sessions.json` by default so `threadId` and pending requests survive restart
+- when a pending request is answered after restart, the gateway now recovers the final answer for that same turn from the bridge
 
 Optional visibility flags:
 
@@ -234,6 +236,15 @@ Optional visibility flags:
 - `--full-auto` is a shortcut for `--approval-policy never --sandbox danger-full-access`
 
 Pending bridge requests always surface in the WhatsApp group, even when `--show-actions` is off, so the user can continue the turn.
+
+Session persistence flags:
+
+- `--session-store /path/to/sessions.json`: override the JSON file used to persist `threadId`, pending requests, and session state
+- default path: `<auth-dir>/../sessions.json`
+
+The gateway intentionally resets `active_turn` to `false` when reloading persisted state after a restart, so a crashed process does not leave the chat permanently blocked.
+
+Because the bridge exposes official `thread/resume`, the gateway can recover the missing final answer after a restart once `/approve`, `/reject`, or `/answer ...` is sent for a persisted pending request.
 
 Bridge-backed WhatsApp commands:
 
@@ -293,6 +304,9 @@ codex-chat-gateway console \
   --log-only
 ```
 
+The console also persists its session store by default using the same `<auth-dir>/../sessions.json` rule, so you can restart it without losing the active thread for the target group.
+It also uses bridge-side thread recovery so a pending approval resolved after restart still yields the final reply in the terminal.
+
 Console commands:
 
 - plain text: send to WhatsApp and, if the bridge is configured, also ask Codex
@@ -324,7 +338,7 @@ If you also want WhatsApp to receive Codex progress messages:
 
 ## Next Steps
 
-1. Persist the session store beyond process memory.
-2. Add approval and pending-action state.
-3. Add attachment handling for the WhatsApp worker.
+1. Improve persisted session state for multi-process or multi-node use.
+2. Add attachment handling for the WhatsApp worker.
+3. Harden the WhatsApp reconnect and stale-session behavior further.
 4. Add a second channel adapter to validate the multi-channel shape.

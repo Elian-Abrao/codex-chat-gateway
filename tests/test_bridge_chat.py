@@ -38,6 +38,7 @@ class FakeBridgeClient(BridgeClient):
         self.calls: list[dict[str, str | None]] = []
         self.stream_calls: list[dict[str, str | None]] = []
         self.respond_calls: list[dict[str, object]] = []
+        self.resume_calls: list[str] = []
 
     async def chat(self, prompt: str, *, thread_id: str | None = None, **kwargs) -> dict[str, str]:
         self.calls.append({"prompt": prompt, "thread_id": thread_id})
@@ -118,6 +119,29 @@ class FakeBridgeClient(BridgeClient):
             }
         )
         return {"ok": True, "requestId": request_id}
+
+    async def resume_thread(self, thread_id: str) -> dict[str, object]:
+        self.resume_calls.append(thread_id)
+        return {
+            "thread": {
+                "id": thread_id,
+                "status": {"type": "idle"},
+                "turns": [
+                    {
+                        "id": "turn_1",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "type": "agentMessage",
+                                "id": "item_1",
+                                "text": "ok",
+                                "phase": "final_answer",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
 
 
 class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -386,6 +410,56 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
             [message.text for message in adapter.sent_messages],
             ["[Codex • ações]\n> aprovação enviada"],
         )
+
+    async def test_gateway_recovers_final_reply_after_restart_resolves_pending_approval(self) -> None:
+        adapter = FakeAdapter()
+        bridge = FakeBridgeClient()
+        store = InMemorySessionStore()
+        store.set_pending_request(
+            "whatsapp:123@g.us",
+            PendingBridgeRequest(
+                request_id="req_1",
+                kind="approval_request",
+                text="Approval required for command execution.",
+                thread_id="thr_1",
+                turn_id="turn_1",
+                approval_type="command_execution",
+                details={"command": "rm -rf /tmp/demo"},
+            ),
+        )
+        gateway = BridgeChatGateway(
+            adapter=adapter,
+            bridge_client=bridge,
+            session_store=store,
+            allowed_group_subjects={"Codex"},
+            allowed_group_chat_ids=set(),
+        )
+
+        await gateway.handle_message(
+            InboundMessage(
+                message_id="msg_approve_recover",
+                channel="whatsapp",
+                chat_id="123@g.us",
+                sender_id="other@s.whatsapp.net",
+                text="/approve",
+                is_group=True,
+                metadata={"fromMe": False, "groupSubject": "Codex"},
+            )
+        )
+
+        self.assertEqual(
+            bridge.respond_calls,
+            [{"request_id": "req_1", "result": {"decision": "approve"}, "error": None}],
+        )
+        self.assertEqual(bridge.resume_calls, ["thr_1"])
+        self.assertEqual(
+            [message.text for message in adapter.sent_messages],
+            [
+                "[Codex • ações]\n> aprovação enviada",
+                "[Codex]\nok",
+            ],
+        )
+        self.assertIsNone(store.get("whatsapp:123@g.us").pending_request)
 
     async def test_gateway_can_resolve_pending_input_requests(self) -> None:
         adapter = FakeAdapter()

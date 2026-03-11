@@ -134,6 +134,12 @@ class BridgeChatGateway:
             if not pending_accepts_approval_commands(pending_request):
                 await self._send_action_reply(message, "a solicitação pendente não aceita /approve ou /reject")
                 return True
+            session = self.session_store.get_or_create(session_key)
+            should_recover = (
+                not session.active_turn
+                and pending_request.thread_id is not None
+                and self.bridge_turn_runner is not None
+            )
             try:
                 await self.bridge_client.respond_server_request(
                     pending_request.request_id,
@@ -144,12 +150,26 @@ class BridgeChatGateway:
                 return True
             self.session_store.clear_pending_request(session_key)
             await self._send_action_reply(message, format_pending_resolution_message(action))
+            if should_recover:
+                recovered = await self.bridge_turn_runner.recover_pending_turn(
+                    session_key=session_key,
+                    thread_id=pending_request.thread_id,
+                    turn_id=pending_request.turn_id,
+                )
+                if recovered is not None and recovered.text:
+                    await self._send_reply(message, text=recovered.text, mode=f"bridge_{recovered.mode}")
             return True
 
         if action == "answer":
             if pending_request.kind != "input_request":
                 await self._send_action_reply(message, "a solicitação pendente não aceita /answer")
                 return True
+            session = self.session_store.get_or_create(session_key)
+            should_recover = (
+                not session.active_turn
+                and pending_request.thread_id is not None
+                and self.bridge_turn_runner is not None
+            )
             try:
                 answers = build_input_answers(pending_request, argument or "")
             except ValueError as exc:
@@ -165,6 +185,14 @@ class BridgeChatGateway:
                 return True
             self.session_store.clear_pending_request(session_key)
             await self._send_action_reply(message, format_pending_resolution_message(action))
+            if should_recover:
+                recovered = await self.bridge_turn_runner.recover_pending_turn(
+                    session_key=session_key,
+                    thread_id=pending_request.thread_id,
+                    turn_id=pending_request.turn_id,
+                )
+                if recovered is not None and recovered.text:
+                    await self._send_reply(message, text=recovered.text, mode=f"bridge_{recovered.mode}")
             return True
 
         return False

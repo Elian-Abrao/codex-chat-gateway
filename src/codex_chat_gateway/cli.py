@@ -12,13 +12,18 @@ from .runtime_client import BridgeClient
 from .services import BridgeChatGateway
 from .services import ConsoleGateway
 from .services import EchoGateway
-from .session_store import InMemorySessionStore
+from .session_store import JsonSessionStore
 from .version import __version__
 
 
 def _run_async(coro: object) -> None:
     with suppress(KeyboardInterrupt):
         asyncio.run(coro)  # type: ignore[arg-type]
+
+
+def _default_session_store_path(auth_dir: str) -> Path:
+    auth_path = Path(auth_dir)
+    return auth_path.parent / "sessions.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     console_parser.add_argument("--bridge-url")
     console_parser.add_argument("--auth-dir", default=".state/whatsapp")
+    console_parser.add_argument(
+        "--session-store",
+        help="Persist thread ids and pending requests to this JSON file. Defaults to <auth-dir>/../sessions.json.",
+    )
     console_parser.add_argument("--allow-from", action="append", default=[])
     console_parser.add_argument("--group-subject", action="append", default=[])
     console_parser.add_argument("--group-chat-id", action="append", default=[])
@@ -85,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bridge_parser.add_argument("--bridge-url", default="http://127.0.0.1:8787")
     bridge_parser.add_argument("--auth-dir", default=".state/whatsapp")
+    bridge_parser.add_argument(
+        "--session-store",
+        help="Persist thread ids and pending requests to this JSON file. Defaults to <auth-dir>/../sessions.json.",
+    )
     bridge_parser.add_argument("--allow-from", action="append", default=[])
     bridge_parser.add_argument("--group-subject", action="append", default=[])
     bridge_parser.add_argument("--group-chat-id", action="append", default=[])
@@ -146,6 +159,7 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
         if not args.group_subject and not args.group_chat_id:
             raise SystemExit("console requires --group-subject or --group-chat-id")
+        session_store = JsonSessionStore(args.session_store or _default_session_store_path(args.auth_dir))
         adapter = create_builtin_adapter(
             args.channel,
             allow_from=args.allow_from,
@@ -159,6 +173,7 @@ def main() -> None:
                 bridge_client=BridgeClient(args.bridge_url) if args.bridge_url else None,
                 allowed_group_subjects=set(args.group_subject),
                 allowed_group_chat_ids=set(args.group_chat_id),
+                session_store=session_store,
                 show_commentary=args.show_commentary,
                 show_reasoning=args.show_reasoning,
                 show_actions=args.show_actions,
@@ -172,6 +187,7 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
         if not args.group_subject and not args.group_chat_id:
             raise SystemExit("bridge-chat requires --group-subject or --group-chat-id")
+        session_store = JsonSessionStore(args.session_store or _default_session_store_path(args.auth_dir))
         adapter = create_builtin_adapter(
             args.channel,
             allow_from=args.allow_from,
@@ -182,7 +198,7 @@ def main() -> None:
         gateway = BridgeChatGateway(
             adapter=adapter,
             bridge_client=BridgeClient(args.bridge_url),
-            session_store=InMemorySessionStore(),
+            session_store=session_store,
             allowed_group_subjects=set(args.group_subject),
             allowed_group_chat_ids=set(args.group_chat_id),
             send_replies=not args.log_only,

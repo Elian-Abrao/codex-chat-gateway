@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from codex_chat_gateway.channel_adapters import available_builtin_adapters
 from codex_chat_gateway.channel_adapters import create_builtin_adapter
+from codex_chat_gateway.cli import _default_session_store_path
 from codex_chat_gateway.cli import build_parser
 
 
@@ -31,6 +33,7 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.show_commentary)
         self.assertFalse(args.show_reasoning)
         self.assertFalse(args.show_actions)
+        self.assertIsNone(args.session_store)
 
     def test_parser_accepts_optional_progress_flags(self) -> None:
         args = build_parser().parse_args(
@@ -64,6 +67,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.bridge_url, "http://127.0.0.1:8787")
         self.assertFalse(args.log_only)
         self.assertFalse(args.show_commentary)
+        self.assertIsNone(args.session_store)
 
     def test_parser_accepts_console_progress_flags(self) -> None:
         args = build_parser().parse_args(
@@ -98,3 +102,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.approval_policy, "never")
         self.assertEqual(args.sandbox, "danger-full-access")
         self.assertTrue(args.full_auto)
+
+    def test_default_session_store_path_uses_auth_dir_parent(self) -> None:
+        self.assertEqual(
+            _default_session_store_path(".state/whatsapp"),
+            Path(".state") / "sessions.json",
+        )
