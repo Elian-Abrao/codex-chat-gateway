@@ -23,6 +23,7 @@ class ConsoleGateway:
     allowed_group_chat_ids: set[str]
     bridge_client: BridgeClient | None = None
     session_store: InMemorySessionStore = field(default_factory=InMemorySessionStore)
+    show_commentary: bool = False
     show_reasoning: bool = False
     show_actions: bool = False
     send_bridge_replies: bool = True
@@ -93,6 +94,8 @@ class ConsoleGateway:
     def _should_forward_update_to_whatsapp(self, mode: str) -> bool:
         if mode == "final":
             return self.send_bridge_replies
+        if mode == "commentary":
+            return self.send_bridge_replies and self.show_commentary
         if mode == "reasoning":
             return self.send_bridge_replies and self.show_reasoning
         if mode == "action":

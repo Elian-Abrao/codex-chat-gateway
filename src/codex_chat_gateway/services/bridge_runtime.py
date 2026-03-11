@@ -12,8 +12,6 @@ FINAL_REPLY_HEADER = "[Codex]"
 COMMENTARY_REPLY_HEADER = "[Codex • andamento]"
 REASONING_REPLY_HEADER = "[Codex • raciocínio]"
 ACTION_REPLY_HEADER = "[Codex • ações]"
-REASONING_CHUNK_TARGET = 160
-COMMENTARY_CHUNK_TARGET = 120
 
 
 @dataclass(slots=True)
@@ -43,6 +41,56 @@ class BridgeTurnRunner:
         quoted = "\n".join(f"> {line}" for line in text.strip().splitlines())
         return f"{ACTION_REPLY_HEADER}\n{quoted}"
 
+    def _format_action_text(self, event: dict[str, object], normalized: str) -> str:
+        event_type = event.get("event")
+        details = event.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+
+        if event_type == "action":
+            action_type = event.get("actionType")
+            if action_type == "command_execution":
+                item = details.get("item", {})
+                if isinstance(item, dict):
+                    command = item.get("command")
+                    if isinstance(command, str) and command:
+                        return f"executando comando: {command}"
+                lowered = normalized.lower()
+                if lowered.startswith("executing command:"):
+                    return f"executando comando: {normalized.split(':', 1)[1].strip()}"
+                return normalized
+            if action_type == "mcp_tool_call":
+                item = details.get("item", {})
+                if isinstance(item, dict):
+                    server = item.get("server") or "?"
+                    tool = item.get("tool") or "?"
+                    return f"tool MCP: {server}/{tool}"
+                return normalized
+            if action_type == "dynamic_tool_call":
+                item = details.get("item", {})
+                if isinstance(item, dict):
+                    tool = item.get("tool") or "?"
+                    return f"tool: {tool}"
+                return normalized
+            if action_type == "tool_call":
+                tool = details.get("tool") or "?"
+                return f"tool solicitada: {tool}"
+            if action_type == "file_change":
+                return "alterações de arquivos preparadas"
+
+        if event_type == "approval_request":
+            approval_type = event.get("approvalType")
+            if approval_type == "command_execution":
+                command = details.get("command") or "<comando desconhecido>"
+                return f"aprovação necessária para comando: {command}"
+            if approval_type == "file_change":
+                return "aprovação necessária para alterações de arquivos"
+
+        if event_type == "input_request":
+            return "aguardando entrada do usuário para continuar"
+
+        return normalized
+
     async def stream_prompt(
         self,
         *,
@@ -51,221 +99,43 @@ class BridgeTurnRunner:
     ) -> AsyncIterator[BridgeUpdate]:
         session = self.session_store.get_or_create(session_key)
         thread_id = session.thread_id
-        assistant_fragments: list[str] = []
-        commentary_buffer = ""
-        reasoning_buffer = ""
-        agent_message_phases: dict[str, str | None] = {}
-        announced_events: set[str] = set()
-
-        def flush_commentary(force: bool = False) -> BridgeUpdate | None:
-            nonlocal commentary_buffer
-            if not self.show_commentary:
-                commentary_buffer = ""
-                return None
-            chunk = commentary_buffer.strip()
-            if not chunk:
-                return None
-            if not force and not (
-                len(commentary_buffer) >= COMMENTARY_CHUNK_TARGET
-                or commentary_buffer.endswith((".", "!", "?", "\n", ":"))
-            ):
-                return None
-            commentary_buffer = ""
-            return BridgeUpdate("commentary", self._format_commentary_reply(chunk))
-
-        def flush_reasoning(force: bool = False) -> BridgeUpdate | None:
-            nonlocal reasoning_buffer
-            if not self.show_reasoning:
-                reasoning_buffer = ""
-                return None
-            chunk = reasoning_buffer.strip()
-            if not chunk:
-                return None
-            if not force and not (
-                len(reasoning_buffer) >= REASONING_CHUNK_TARGET
-                or reasoning_buffer.endswith((".", "!", "?", "\n"))
-            ):
-                return None
-            reasoning_buffer = ""
-            return BridgeUpdate("reasoning", self._format_reasoning_reply(chunk))
-
-        def make_action_update(key: str, text: str) -> BridgeUpdate | None:
-            if not self.show_actions or key in announced_events:
-                return None
-            announced_events.add(key)
-            return BridgeUpdate("action", self._format_action_reply(text))
-
-        async for event in self.bridge_client.stream_chat(
+        async for event in self.bridge_client.stream_consumer_chat(
             prompt,
             thread_id=thread_id,
             summary="detailed" if self.show_reasoning else "none",
         ):
-            event_type = event.get("type")
-            payload = event.get("payload", {})
-            if not isinstance(payload, dict):
-                payload = {}
-
+            event_type = event.get("event")
             event_thread_id = event.get("threadId")
             if isinstance(event_thread_id, str) and event_thread_id:
                 thread_id = event_thread_id
                 self.session_store.set_thread_id(session_key, thread_id)
 
-            if event_type == "item/started":
-                item = payload.get("item", {})
-                if not isinstance(item, dict):
-                    continue
-                item_type = item.get("type")
-                item_id = item.get("id")
-                if item_type == "agentMessage" and isinstance(item_id, str):
-                    phase = item.get("phase")
-                    agent_message_phases[item_id] = phase if isinstance(phase, str) else None
-                    continue
-                if item_type == "commandExecution" and isinstance(item_id, str):
-                    maybe_commentary = flush_commentary(force=True)
-                    if maybe_commentary is not None:
-                        yield maybe_commentary
-                    maybe_reasoning = flush_reasoning(force=True)
-                    if maybe_reasoning is not None:
-                        yield maybe_reasoning
-                    update = make_action_update(
-                        f"commandExecution:{item_id}",
-                        f"executando comando: {item.get('command') or '<sem comando>'}",
-                    )
-                    if update is not None:
-                        yield update
-                    continue
-                if item_type == "mcpToolCall" and isinstance(item_id, str):
-                    maybe_commentary = flush_commentary(force=True)
-                    if maybe_commentary is not None:
-                        yield maybe_commentary
-                    maybe_reasoning = flush_reasoning(force=True)
-                    if maybe_reasoning is not None:
-                        yield maybe_reasoning
-                    update = make_action_update(
-                        f"mcpToolCall:{item_id}",
-                        f"tool MCP: {item.get('server') or '?'}/{item.get('tool') or '?'}",
-                    )
-                    if update is not None:
-                        yield update
-                    continue
-                if item_type == "dynamicToolCall" and isinstance(item_id, str):
-                    maybe_commentary = flush_commentary(force=True)
-                    if maybe_commentary is not None:
-                        yield maybe_commentary
-                    maybe_reasoning = flush_reasoning(force=True)
-                    if maybe_reasoning is not None:
-                        yield maybe_reasoning
-                    update = make_action_update(
-                        f"dynamicToolCall:{item_id}",
-                        f"tool: {item.get('tool') or '?'}",
-                    )
-                    if update is not None:
-                        yield update
-                    continue
+            text = event.get("text")
+            if not isinstance(text, str):
                 continue
 
-            if event_type == "item/agentMessage/delta":
-                item_id = payload.get("itemId")
-                if not isinstance(item_id, str):
-                    continue
-                phase = agent_message_phases.get(item_id)
-                delta = payload.get("delta", "")
-                if not isinstance(delta, str) or not delta:
-                    continue
-                if phase == "commentary":
-                    commentary_buffer += delta
-                    update = flush_commentary(force=False)
-                    if update is not None:
-                        yield update
-                    continue
-                if phase in (None, "final_answer"):
-                    assistant_fragments.append(delta)
+            normalized = text.strip()
+            if not normalized:
                 continue
 
-            if event_type == "item/reasoning/summaryTextDelta":
-                delta = payload.get("delta", "")
-                if isinstance(delta, str) and delta:
-                    reasoning_buffer += delta
-                    update = flush_reasoning(force=False)
-                    if update is not None:
-                        yield update
+            if event_type == "commentary":
+                if self.show_commentary:
+                    yield BridgeUpdate("commentary", self._format_commentary_reply(normalized))
                 continue
 
-            if event_type == "item/tool/call":
-                maybe_commentary = flush_commentary(force=True)
-                if maybe_commentary is not None:
-                    yield maybe_commentary
-                maybe_reasoning = flush_reasoning(force=True)
-                if maybe_reasoning is not None:
-                    yield maybe_reasoning
-                request_id = event.get("requestId")
-                update = make_action_update(
-                    f"toolCall:{request_id or payload.get('tool') or '<tool desconhecida>'}",
-                    f"tool solicitada: {payload.get('tool') or '<tool desconhecida>'}",
-                )
-                if update is not None:
-                    yield update
+            if event_type == "reasoning_summary":
+                if self.show_reasoning:
+                    yield BridgeUpdate("reasoning", self._format_reasoning_reply(normalized))
                 continue
 
-            if event_type == "item/commandExecution/requestApproval":
-                maybe_commentary = flush_commentary(force=True)
-                if maybe_commentary is not None:
-                    yield maybe_commentary
-                maybe_reasoning = flush_reasoning(force=True)
-                if maybe_reasoning is not None:
-                    yield maybe_reasoning
-                request_id = event.get("requestId")
-                update = make_action_update(
-                    f"commandApproval:{request_id or payload.get('command') or '<comando desconhecido>'}",
-                    f"aprovação necessária para comando: {payload.get('command') or '<comando desconhecido>'}",
-                )
-                if update is not None:
-                    yield update
+            if event_type in {"action", "approval_request", "input_request"}:
+                if self.show_actions:
+                    yield BridgeUpdate("action", self._format_action_reply(self._format_action_text(event, normalized)))
                 continue
 
-            if event_type == "item/fileChange/requestApproval":
-                maybe_commentary = flush_commentary(force=True)
-                if maybe_commentary is not None:
-                    yield maybe_commentary
-                maybe_reasoning = flush_reasoning(force=True)
-                if maybe_reasoning is not None:
-                    yield maybe_reasoning
-                request_id = event.get("requestId")
-                update = make_action_update(
-                    f"fileApproval:{request_id or 'file-change'}",
-                    "aprovação necessária para alterações de arquivos",
-                )
-                if update is not None:
-                    yield update
+            if event_type == "final":
+                yield BridgeUpdate("final", self._format_final_reply(normalized))
                 continue
 
-            if event_type == "item/tool/requestUserInput":
-                maybe_commentary = flush_commentary(force=True)
-                if maybe_commentary is not None:
-                    yield maybe_commentary
-                maybe_reasoning = flush_reasoning(force=True)
-                if maybe_reasoning is not None:
-                    yield maybe_reasoning
-                request_id = event.get("requestId")
-                update = make_action_update(
-                    f"userInput:{request_id or 'tool-input'}",
-                    "aguardando entrada do usuário para continuar",
-                )
-                if update is not None:
-                    yield update
-                continue
-
-            if event_type == "turn/completed":
-                break
-
-        update = flush_commentary(force=True)
-        if update is not None:
-            yield update
-
-        update = flush_reasoning(force=True)
-        if update is not None:
-            yield update
-
-        assistant_text = "".join(assistant_fragments).strip()
-        if assistant_text:
-            yield BridgeUpdate("final", self._format_final_reply(assistant_text))
+            if event_type == "error":
+                yield BridgeUpdate("final", self._format_final_reply(f"Erro do bridge: {normalized}"))

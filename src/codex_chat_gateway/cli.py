@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     console_parser.add_argument("--group-subject", action="append", default=[])
     console_parser.add_argument("--group-chat-id", action="append", default=[])
     console_parser.add_argument(
+        "--show-commentary",
+        action="store_true",
+        help="Send Codex andamento messages back to WhatsApp and print them in the terminal.",
+    )
+    console_parser.add_argument(
         "--show-reasoning",
         action="store_true",
         help="Send reasoning summary progress messages back to WhatsApp and print them in the terminal.",
@@ -70,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_parser.add_argument("--allow-from", action="append", default=[])
     bridge_parser.add_argument("--group-subject", action="append", default=[])
     bridge_parser.add_argument("--group-chat-id", action="append", default=[])
+    bridge_parser.add_argument(
+        "--show-commentary",
+        action="store_true",
+        help="Send Codex andamento messages back to WhatsApp.",
+    )
     bridge_parser.add_argument(
         "--show-reasoning",
         action="store_true",
@@ -124,6 +134,7 @@ def main() -> None:
                 bridge_client=BridgeClient(args.bridge_url) if args.bridge_url else None,
                 allowed_group_subjects=set(args.group_subject),
                 allowed_group_chat_ids=set(args.group_chat_id),
+                show_commentary=args.show_commentary,
                 show_reasoning=args.show_reasoning,
                 show_actions=args.show_actions,
                 send_bridge_replies=not args.log_only,
@@ -148,6 +159,7 @@ def main() -> None:
             allowed_group_subjects=set(args.group_subject),
             allowed_group_chat_ids=set(args.group_chat_id),
             send_replies=not args.log_only,
+            show_commentary=args.show_commentary,
             show_reasoning=args.show_reasoning,
             show_actions=args.show_actions,
         )

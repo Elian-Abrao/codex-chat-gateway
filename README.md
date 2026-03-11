@@ -85,7 +85,7 @@ That means the current codebase now includes:
 The initial gateway design assumes the bridge provides:
 
 - `POST /v1/chat`
-- `POST /v1/chat/stream`
+- `POST /v1/chat/consumer-stream`
 - `POST /v1/slash-commands/execute`
 - `POST /v1/server-requests/respond`
 - `POST /v1/threads/start`
@@ -206,15 +206,17 @@ What this mode does right now:
 
 - watches all messages from the WhatsApp group named `Codex`
 - forwards the text to `codex-runtime-bridge`
+- consumes the stable consumer stream from the bridge
 - creates and reuses one `threadId` per WhatsApp group
 - replies back to the same WhatsApp group with the final answer formatted as `[Codex]`
 
 Optional visibility flags:
 
+- `--show-commentary` sends Codex andamento messages back to WhatsApp in smaller progress messages
 - `--show-reasoning` sends reasoning summaries back to WhatsApp in smaller progress messages
 - `--show-actions` sends tool and command activity back to WhatsApp in quoted action blocks
 
-Example with both enabled:
+Example with all progress updates enabled:
 
 ```bash
 codex-chat-gateway bridge-chat \
@@ -222,6 +224,7 @@ codex-chat-gateway bridge-chat \
   --auth-dir .state/whatsapp \
   --bridge-url http://127.0.0.1:8787 \
   --group-subject Codex \
+  --show-commentary \
   --show-reasoning \
   --show-actions
 ```
@@ -267,6 +270,12 @@ Console commands:
 - `/quit`: exit
 
 By default, the terminal shows Codex progress, but WhatsApp only receives the final `[Codex]` reply.
+
+If you also want WhatsApp to receive Codex progress messages:
+
+- `--show-commentary` sends `[Codex • andamento]`
+- `--show-reasoning` sends `[Codex • raciocínio]`
+- `--show-actions` sends `[Codex • ações]`
 
 ## Design Rules
 

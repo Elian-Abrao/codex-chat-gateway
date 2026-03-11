@@ -32,36 +32,30 @@ class FakeAdapter(ChannelAdapter):
 
 class FakeBridgeClient(BridgeClient):
     async def chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
-        raise AssertionError("console tests should use stream_chat")
+        raise AssertionError("console tests should use stream_consumer_chat")
 
-    async def stream_chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
-        yield {"type": "thread.started", "threadId": "thr_1", "thread": {"id": "thr_1"}}
+    async def stream_consumer_chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
+        yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
+        yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
         yield {
-            "type": "item/started",
+            "event": "commentary",
             "threadId": "thr_1",
-            "payload": {"item": {"id": "msg_1", "type": "agentMessage", "phase": "commentary"}},
+            "turnId": "turn_1",
+            "text": "Vou verificar agora.",
         }
         yield {
-            "type": "item/agentMessage/delta",
+            "event": "action",
             "threadId": "thr_1",
-            "payload": {"itemId": "msg_1", "delta": "Vou verificar agora."},
+            "turnId": "turn_1",
+            "text": "Executing command: uptime",
+            "actionType": "command_execution",
         }
         yield {
-            "type": "item/started",
+            "event": "final",
             "threadId": "thr_1",
-            "payload": {"item": {"id": "cmd_1", "type": "commandExecution", "command": "uptime"}},
+            "turnId": "turn_1",
+            "text": "ok",
         }
-        yield {
-            "type": "item/started",
-            "threadId": "thr_1",
-            "payload": {"item": {"id": "msg_2", "type": "agentMessage", "phase": "final_answer"}},
-        }
-        yield {
-            "type": "item/agentMessage/delta",
-            "threadId": "thr_1",
-            "payload": {"itemId": "msg_2", "delta": "ok"},
-        }
-        yield {"type": "turn/completed", "threadId": "thr_1", "payload": {"turn": {"id": "turn_1"}}}
 
 
 class ConsoleGatewayTests(unittest.IsolatedAsyncioTestCase):

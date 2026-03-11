@@ -23,6 +23,7 @@ class BridgeChatGateway:
     allowed_group_subjects: set[str]
     allowed_group_chat_ids: set[str]
     send_replies: bool = True
+    show_commentary: bool = False
     show_reasoning: bool = False
     show_actions: bool = False
 
@@ -31,6 +32,7 @@ class BridgeChatGateway:
         return BridgeTurnRunner(
             bridge_client=self.bridge_client,
             session_store=self.session_store,
+            show_commentary=self.show_commentary,
             show_reasoning=self.show_reasoning,
             show_actions=self.show_actions,
         )

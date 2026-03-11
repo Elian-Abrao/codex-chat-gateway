@@ -43,7 +43,7 @@ class FakeBridgeClient(BridgeClient):
             "assistantText": "ok",
         }
 
-    async def stream_chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
+    async def stream_consumer_chat(self, prompt: str, *, thread_id: str | None = None, **kwargs):
         self.stream_calls.append(
             {
                 "prompt": prompt,
@@ -51,28 +51,33 @@ class FakeBridgeClient(BridgeClient):
                 "summary": kwargs.get("summary"),
             }
         )
-        yield {"type": "thread.started", "threadId": "thr_1", "thread": {"id": "thr_1"}}
+        yield {"event": "status", "phase": "thread_started", "threadId": "thr_1", "message": "Thread started."}
+        yield {"event": "status", "phase": "turn_started", "threadId": "thr_1", "turnId": "turn_1", "message": "Turn started."}
         yield {
-            "type": "item/reasoning/summaryTextDelta",
+            "event": "commentary",
             "threadId": "thr_1",
-            "payload": {"itemId": "reason_1", "delta": "Analisando o pedido."},
+            "turnId": "turn_1",
+            "text": "Vou verificar agora.",
         }
         yield {
-            "type": "item/started",
+            "event": "reasoning_summary",
             "threadId": "thr_1",
-            "payload": {"item": {"id": "cmd_1", "type": "commandExecution", "command": "pwd"}},
+            "turnId": "turn_1",
+            "text": "Analisando o pedido.",
         }
         yield {
-            "type": "item/started",
+            "event": "action",
             "threadId": "thr_1",
-            "payload": {"item": {"id": "msg_2", "type": "agentMessage", "phase": "final_answer"}},
+            "turnId": "turn_1",
+            "text": "Executing command: pwd",
+            "actionType": "command_execution",
         }
         yield {
-            "type": "item/agentMessage/delta",
+            "event": "final",
             "threadId": "thr_1",
-            "payload": {"itemId": "msg_2", "delta": "ok"},
+            "turnId": "turn_1",
+            "text": "ok",
         }
-        yield {"type": "turn/completed", "threadId": "thr_1", "payload": {"turn": {"id": "turn_1"}}}
 
 
 class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -133,7 +138,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.get("whatsapp:123@g.us").thread_id, "thr_1")
         self.assertEqual([message.text for message in adapter.sent_messages], ["[Codex]\nok"])
 
-    async def test_gateway_can_emit_reasoning_and_action_updates_when_enabled(self) -> None:
+    async def test_gateway_can_emit_progress_updates_when_enabled(self) -> None:
         adapter = FakeAdapter()
         bridge = FakeBridgeClient()
         gateway = BridgeChatGateway(
@@ -142,6 +147,7 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
             session_store=InMemorySessionStore(),
             allowed_group_subjects={"Codex"},
             allowed_group_chat_ids=set(),
+            show_commentary=True,
             show_reasoning=True,
             show_actions=True,
         )
@@ -162,10 +168,11 @@ class BridgeChatGatewayTests(unittest.IsolatedAsyncioTestCase):
             bridge.stream_calls,
             [{"prompt": "Oi", "thread_id": None, "summary": "detailed"}],
         )
-        self.assertEqual(len(adapter.sent_messages), 3)
+        self.assertEqual(len(adapter.sent_messages), 4)
         self.assertEqual(
             [message.text for message in adapter.sent_messages],
             [
+                "[Codex • andamento]\nVou verificar agora.",
                 "[Codex • raciocínio]\nAnalisando o pedido.",
                 "[Codex • ações]\n> executando comando: pwd",
                 "[Codex]\nok",

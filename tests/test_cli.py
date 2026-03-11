@@ -28,6 +28,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "bridge-chat")
         self.assertEqual(args.group_subject, ["Codex"])
         self.assertFalse(args.log_only)
+        self.assertFalse(args.show_commentary)
         self.assertFalse(args.show_reasoning)
         self.assertFalse(args.show_actions)
 
@@ -37,11 +38,13 @@ class CliTests(unittest.TestCase):
                 "bridge-chat",
                 "--group-subject",
                 "Codex",
+                "--show-commentary",
                 "--show-reasoning",
                 "--show-actions",
             ]
         )
 
+        self.assertTrue(args.show_commentary)
         self.assertTrue(args.show_reasoning)
         self.assertTrue(args.show_actions)
 
@@ -60,3 +63,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.group_chat_id, ["123@g.us"])
         self.assertEqual(args.bridge_url, "http://127.0.0.1:8787")
         self.assertFalse(args.log_only)
+        self.assertFalse(args.show_commentary)
+
+    def test_parser_accepts_console_progress_flags(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "console",
+                "--group-chat-id",
+                "123@g.us",
+                "--show-commentary",
+                "--show-reasoning",
+                "--show-actions",
+            ]
+        )
+
+        self.assertTrue(args.show_commentary)
+        self.assertTrue(args.show_reasoning)
+        self.assertTrue(args.show_actions)
